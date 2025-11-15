@@ -22,11 +22,11 @@ type Account struct {
 
 	Address     string `bson:"address,omitempty" json:"address,omitempty"`
 	AvatarUrl   string `bson:"avatar_url,omitempty" json:"avatar_url,omitempty"`
-	PublicUrlId string `bson:"public_url_id,omitempty" json:"public_url_id,omitempty"`
+	AvatarUrlId string `bson:"avatar_url_id,omitempty" json:"avatar_url_id,omitempty"`
 
 	// Thông tin riêng cho từng loại người dùng
-	OrganizerInfor *Organizer `bson:"organizer_infor,omitempty" json:"organizer_infor,omitempty"`
-	UserInfor      *User      `bson:"user_infor,omitempty" json:"user_infor,omitempty"`
+	OrganizerInfo *Organizer `bson:"organizer_info,omitempty" json:"organizer_info,omitempty"`
+	UserInfo      *User      `bson:"user_info,omitempty" json:"user_info,omitempty"`
 
 	// --- Trạng thái khóa tài khoản ---
 	IsLocked    bool      `bson:"is_locked" json:"is_locked"`
@@ -55,10 +55,10 @@ type Account struct {
 	// --- Trạng thái hoạt động ---
 	IsActive bool `bson:"is_active" json:"is_active"`
 
-	CreatedAt time.Time          `bson:"created_at,omitempty" json:"created_at,omitempty"`
-	CreatedBy primitive.ObjectID `bson:"created_by,omitempty" json:"created_by,omitempty"`
-	UpdatedAt time.Time          `bson:"updated_at,omitempty" json:"updated_at,omitempty"`
-	UpdatedBy primitive.ObjectID `bson:"updated_by,omitempty" json:"updated_by,omitempty"`
+	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+	CreatedBy primitive.ObjectID `bson:"created_by" json:"created_by"`
+	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
+	UpdatedBy primitive.ObjectID `bson:"updated_by" json:"updated_by"`
 	DeletedAt time.Time          `bson:"deleted_at,omitempty" json:"deleted_at,omitempty"`
 	DeletedBy primitive.ObjectID `bson:"deleted_by,omitempty" json:"deleted_by,omitempty"`
 }
@@ -261,9 +261,9 @@ func (a *Account) ParseEntry() bson.M {
 		"phone":                a.Phone,
 		"address":              a.Address,
 		"avatar_url":           a.AvatarUrl,
-		"public_url_id":        a.PublicUrlId,
-		"organizer_infor":      a.OrganizerInfor,
-		"user_infor":           a.UserInfor,
+		"avatar_url_id":        a.AvatarUrlId,
+		"organizer_info":       a.OrganizerInfo,
+		"user_info":            a.UserInfo,
 		"is_locked":            a.IsLocked,
 		"lock_at":              a.LockAt,
 		"lock_util":            a.LockUtil,

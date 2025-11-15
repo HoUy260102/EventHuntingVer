@@ -40,6 +40,11 @@ func GetServerPort() string {
 	return fmt.Sprintf("%v", server["port"])
 }
 
+func GetServerDomain() string {
+	server := mpConfig["server"].(map[string]interface{})
+	return fmt.Sprintf("%v", server["domain"])
+}
+
 func GetDatabaseURI() string {
 	db := mpConfig["database"].(map[string]interface{})
 	return fmt.Sprintf("%v", db["uri"])
@@ -153,4 +158,15 @@ func GetCloudinarySecret() string {
 func GetSessionSecret() string {
 	session := mpConfig["session"].(map[string]interface{})
 	return fmt.Sprintf("%v", session["secret"])
+}
+
+func GetDefaultPagination(name string) (int, int) {
+	pagination := mpConfig["pagination"].(map[string]interface{})
+	target, ok := pagination[name].(map[string]interface{})
+	if !ok {
+		return 1, 10
+	}
+	length := target["default_length"].(int)
+	maxLength := target["default_max_length"].(int)
+	return length, maxLength
 }

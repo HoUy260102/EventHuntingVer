@@ -3,6 +3,7 @@ package controllers
 import (
 	"EventHunting/collections"
 	"EventHunting/configs"
+	"EventHunting/database"
 	"EventHunting/dto"
 	"EventHunting/utils"
 	"context"
@@ -10,10 +11,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
+	"github.com/markbates/goth/gothic"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -24,10 +26,11 @@ const (
 	maxLoginFailedCount = 5
 )
 
-func Login(c *gin.Context, redisClient *redis.Client) {
+func Login(c *gin.Context) {
 	var (
 		loginRequest dto.LoginRequest
 		ctx, cancel  = context.WithTimeout(context.Background(), 10*time.Second)
+		redisClient  = database.GetRedisClient().Client
 	)
 	defer cancel()
 
@@ -226,6 +229,101 @@ func Login(c *gin.Context, redisClient *redis.Client) {
 	})
 }
 
+func RenewAccessToken(c *gin.Context) {
+	var (
+		req          dto.RenewAcessTokenRequest
+		err          error
+		sessionEntry = &collections.Session{}
+	)
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	err = sessionEntry.First(nil, bson.M{
+		"refresh_token": req.RefreshToken,
+	})
+	switch {
+	case err == nil:
+		if sessionEntry.IsRevoked {
+			utils.ResponseError(c, http.StatusUnauthorized, "Token này đã được thu hồi!", err.Error())
+			return
+		}
+	case err == mongo.ErrNoDocuments:
+		utils.ResponseError(c, http.StatusUnauthorized, "Token không hợp lệ!", err.Error())
+		return
+	default:
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+		return
+	}
+
+	refreshTokenClaim, err := utils.ExtractCustomClaims(req.RefreshToken)
+	if err != nil {
+		utils.ResponseError(c, http.StatusUnauthorized, "Token không hợp lệ!", err.Error())
+		return
+	}
+
+	roles := refreshTokenClaim.Roles
+	accessToken, _, err := utils.GenerateToken(refreshTokenClaim.RegisteredClaims.Subject, refreshTokenClaim.Email, roles, configs.GetJWTAccessExp(), "access")
+	if err != nil {
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+		return
+	}
+
+	utils.ResponseSuccess(c, http.StatusOK, "Làm mới access token thành công.", accessToken, nil)
+}
+
+func Logout(c *gin.Context) {
+	var (
+		err          error
+		sessionEntry = &collections.Session{}
+		redisClient  = database.GetRedisClient().Client
+	)
+	deviceId := c.GetHeader("Device-Id")
+	authHeader := c.GetHeader("Authorization")
+	token := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+	if token == "" {
+		utils.ResponseError(c, http.StatusUnauthorized, "Không tìm thấy token!", nil)
+		return
+	}
+	tokenClaims, err := utils.ExtractCustomClaims(token)
+	if err != nil {
+		utils.ResponseError(c, http.StatusUnauthorized, "Token không hợp lệ hoặc hết hạn!", err.Error())
+		return
+	}
+	accountId, _ := primitive.ObjectIDFromHex(tokenClaims.RegisteredClaims.Subject)
+
+	err = sessionEntry.Update(nil, bson.M{
+		"user_id":   accountId,
+		"device_id": deviceId,
+	}, bson.M{
+		"$set": bson.M{
+			"is_revoked": true,
+		},
+	})
+
+	if err != nil {
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+		return
+	}
+
+	duration := tokenClaims.RegisteredClaims.ExpiresAt.Unix() - time.Now().Unix() + 3600
+	if duration > 0 {
+		key := fmt.Sprintf("blacklist:accesstoken:%s", token)
+		err := redisClient.Set(c.Request.Context(), key, "", time.Duration(duration)*time.Second).Err()
+		if err != nil {
+			log.Printf("Redis blacklist set error: %v", err)
+			utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+			return
+		}
+	}
+	utils.ResponseSuccess(c, http.StatusOK, "Logout thành công.", nil, nil)
+}
+
 func GetRolesFromAccount(account collections.Account) ([]string, error) {
 	var roles []string
 	roleEntry := &collections.Role{} // Khởi tạo collection
@@ -270,3 +368,117 @@ func GetRolesFromAccount(account collections.Account) ([]string, error) {
 
 	return roles, nil
 }
+
+func BeginGoogleAuth(c *gin.Context) {
+	q := c.Request.URL.Query()
+	q.Add("provider", "google")
+	c.Request.URL.RawQuery = q.Encode()
+	gothic.BeginAuthHandler(c.Writer, c.Request)
+}
+
+func OAuthCallback(c *gin.Context) {
+	var (
+		accountEntry = &collections.Account{}
+		sessionEntry = &collections.Session{}
+		err          error
+	)
+	q := c.Request.URL.Query()
+	q.Add("provider", "google")
+	c.Request.URL.RawQuery = q.Encode()
+
+	//Gửi authorization code lên resource server để nhận token
+	user, err := gothic.CompleteUserAuth(c.Writer, c.Request)
+	if err != nil {
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+		return
+	}
+
+	err = accountEntry.First(bson.M{
+		"email": user.Email,
+	})
+
+	switch {
+	case err == nil:
+	case errors.Is(err, mongo.ErrNoDocuments):
+	default:
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+		return
+	}
+	roles, _ := GetRolesFromAccount(*accountEntry)
+	accessToken, accessTokenClaims, err := utils.GenerateToken(accountEntry.ID.Hex(), user.Email, roles, configs.GetJWTAccessExp(), "access")
+	if err != nil {
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+		return
+	}
+	//Sinh refresh token
+	refreshToken, refreshTokenClaims, err := utils.GenerateToken(accountEntry.ID.Hex(), user.Email, roles, configs.GetJWTRefreshExp(), "refresh")
+	if err != nil {
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+		return
+	}
+
+	sessionRes, err := sessionEntry.FindOneAndUpdate(collections.Session{
+		IsRevoked:     false,
+		RefreshToken:  refreshToken,
+		TrustedDevice: true,
+		DeviceId:      c.GetHeader("Device-Id"),
+		UserId:        accountEntry.ID,
+		CreatedAt:     refreshTokenClaims.RegisteredClaims.IssuedAt.Time,
+		ExpiresAt:     refreshTokenClaims.ExpiresAt.Time,
+		ApprovedToken: "",
+	})
+
+	if err != nil {
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+		return
+	}
+
+	c.JSON(http.StatusOK, bson.M{
+		"status":    http.StatusOK,
+		"message":   "Login thành công",
+		"timestamp": time.Now(),
+		"data": bson.M{
+			"session_id":               sessionRes.Id,
+			"access_token":             accessToken,
+			"refresh_token":            refreshToken,
+			"access_token_expired_at":  accessTokenClaims.ExpiresAt.Time,
+			"refresh_token_expired_at": refreshTokenClaims.ExpiresAt.Time,
+		},
+	})
+
+	//payload := fmt.Sprintf(`{
+	//    "access_token": "%s",
+	//    "refresh_token": "%s",
+	//}`, accessToken, refreshToken)
+	//html := fmt.Sprintf(`
+	//<html>
+	//  <body>
+	//    <script>
+	//      window.opener.postMessage(%s, "http://localhost:5173");
+	//      window.close();
+	//    </script>
+	//  </body>
+	//</html>
+	//`, payload)
+	//
+	//c.Data(http.StatusOK, "text/html", []byte(html))
+}
+
+//func GetCurrentRole(account collections.Account, redisClient *redis.Client) (string, error) {
+//	var (
+//		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+//		roleEntry   = &collections.Role{}
+//	)
+//	defer cancel()
+//	role, err := redisClient.Get(ctx, fmt.Sprintf("auth:account:%s:current_role", account.ID.Hex())).Result()
+//	if err == redis.Nil {
+//		_ = roleEntry.First(bson.M{
+//			"_id": account.RoleId,
+//		})
+//		redisClient.Set(ctx, fmt.Sprintf("auth:account:%s:current_role", account.ID.Hex()), roleEntry.Name, 0)
+//		return roleEntry.Name, nil
+//	} else if err != nil {
+//		return "", err
+//	}
+//	return role, nil
+//}

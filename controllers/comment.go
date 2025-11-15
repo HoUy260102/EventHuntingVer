@@ -3,11 +3,15 @@ package controllers
 import (
 	"EventHunting/collections"
 	"EventHunting/consts"
+	"EventHunting/database"
 	"EventHunting/dto"
 	"EventHunting/utils"
+	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -41,18 +45,18 @@ import (
 //	}
 //
 //	// KIỂM TRA DỮ LIỆU CƠ BẢN
-//	if req.BlogID.IsZero() && req.Category == consts.COMMENT_TYPE_BLOG {
+//	if req.DocumentID.IsZero() && req.Category == consts.COMMENT_TYPE_BLOG {
 //		c.JSON(http.StatusBadRequest, gin.H{
 //			"status":  http.StatusBadRequest,
-//			"message": "BlogID là bắt buộc",
+//			"message": "DocumentID là bắt buộc",
 //		})
 //		return
 //	}
 //
 //	// KIỂM TRA BÀI VIẾT (BLOG)
-//	if !req.BlogID.IsZero() {
+//	if !req.DocumentID.IsZero() {
 //		filterBlog := bson.M{
-//			"_id":        req.BlogID,
+//			"_id":        req.DocumentID,
 //			"deleted_at": bson.M{"$exists": false},
 //		}
 //		checkBlogExisted := blogEntry.First(filterBlog)
@@ -153,7 +157,7 @@ import (
 //		// Vòng lặp Retry
 //		for i := 0; i < maxRetries; i++ {
 //			opts := options.InsertMany().SetOrdered(false)
-//			mediaErr = mediaEntry.CreateMany(newMedias, opts)
+//			mediaErr = mediaEntry.CreateMany(nil, newMedias, opts)
 //
 //			if mediaErr == nil {
 //				break
@@ -190,7 +194,7 @@ import (
 //		ParentID:    req.ParentID,
 //		Content:     req.Content,
 //		ContentHTML: req.ContentHTML,
-//		BlogID:      req.BlogID,
+//		DocumentID:      req.DocumentID,
 //		Medias:      commentMedias,
 //		IsEdit:      false,
 //		CreatedAt:   now,
@@ -214,7 +218,7 @@ import (
 //			filterDescendants := bson.M{"_id": bson.M{"$in": newComment.AncestorIDs}}
 //			updateDescendants := bson.M{"$inc": bson.M{"descendant_count": 1}}
 //
-//			_, err = commentEntry.UpdateMany(filterDescendants, updateDescendants)
+//			_, err = commentEntry.UpdateMany(nil, filterDescendants, updateDescendants)
 //			if err != nil {
 //				log.Printf("LỖI NỀN: Không thể cập nhật descendant_count: %v", err)
 //			}
@@ -464,7 +468,7 @@ import (
 //	}
 //
 //	// Thực thi lệnh xóa mềm hàng loạt
-//	res, err := commentEntry.UpdateMany(filterDelete, updateDelete)
+//	res, err := commentEntry.UpdateMany(nil, filterDelete, updateDelete)
 //	switch {
 //	case err == nil:
 //		c.JSON(http.StatusOK, gin.H{
@@ -516,7 +520,7 @@ import (
 //	}
 //
 //	// Thực thi lệnh khôi phục hàng loạt
-//	res, err := commentEntry.UpdateMany(filterRestore, updateRestore)
+//	res, err := commentEntry.UpdateMany(nil, filterRestore, updateRestore)
 //
 //	switch {
 //	case err == nil:
@@ -642,7 +646,7 @@ import (
 //	)
 //	for i := 0; i < maxRetries; i++ {
 //		opts := options.InsertMany().SetOrdered(false)
-//		mediaErr = mediaEntry.CreateMany(medias, opts)
+//		mediaErr = mediaEntry.CreateMany(nil, medias, opts)
 //		if mediaErr == nil {
 //			return nil
 //		}
@@ -672,7 +676,7 @@ import (
 //	update := bson.M{"$set": bson.M{"status": "inactive"}}
 //
 //	for i := 0; i < maxRetries; i++ {
-//		mediaErr = mediaEntry.UpdateMany(filter, update)
+//		mediaErr = mediaEntry.UpdateMany(nil, filter, update)
 //		if mediaErr == nil {
 //			return nil
 //		}
@@ -691,7 +695,10 @@ import (
 func CreateComment(c *gin.Context) {
 	var (
 		blogEntry     = &collections.Blog{}
+		eventEntry    = &collections.Event{}
+		err           error
 		commentEntry  = &collections.Comment{}
+		mediaEntry    = &collections.Media{}
 		maxRetry      = 3
 		invalidErrors []string
 	)
@@ -714,7 +721,7 @@ func CreateComment(c *gin.Context) {
 	}
 
 	//Valide dữ liệu đầu vào
-	if invalidErrors = dto.ValidateCommentCreate(req); len(invalidErrors) > 0 {
+	if invalidErrors = utils.ValidateCommentCreate(req); len(invalidErrors) > 0 {
 		c.JSON(http.StatusBadRequest, dto.ApiResponse{
 			Status:  http.StatusBadRequest,
 			Message: "Lỗi nhập sai dữ liệu!",
@@ -724,25 +731,35 @@ func CreateComment(c *gin.Context) {
 	}
 
 	// KIỂM TRA BÀI VIẾT (BLOG)
-	if !req.BlogID.IsZero() {
+	if !req.DocumentID.IsZero() {
 		filterBlog := bson.M{
-			"_id":        req.BlogID,
+			"_id":        req.DocumentID,
 			"deleted_at": bson.M{"$exists": false},
 		}
-		checkBlogExisted := blogEntry.First(filterBlog)
-		if checkBlogExisted != nil {
-			if errors.Is(checkBlogExisted, mongo.ErrNoDocuments) {
-				c.JSON(http.StatusNotFound, dto.ApiResponse{
-					Status:  http.StatusNotFound,
-					Message: "Bài viết không tồn tại hoặc đã bị xóa!",
-					Error:   checkBlogExisted.Error(),
-				})
+		if req.Category == consts.COMMENT_TYPE_BLOG {
+			err = blogEntry.First(nil, filterBlog)
+		}
+		if req.Category == consts.COMMENT_TYPE_EVENT {
+			err = eventEntry.First(nil, filterBlog)
+		}
+		switch {
+		case err == nil:
+			if blogEntry.IsLockComment {
+				utils.ResponseError(c, http.StatusBadRequest, "", "Đang được khóa bình luận!")
 				return
 			}
+		case errors.Is(err, mongo.ErrNoDocuments):
+			c.JSON(http.StatusNotFound, dto.ApiResponse{
+				Status:  http.StatusNotFound,
+				Message: "Document không tồn tại hoặc đã bị xóa!",
+				Error:   err.Error(),
+			})
+			return
+		default:
 			c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 				Status:  http.StatusInternalServerError,
-				Message: "Lỗi do hệ thống khi kiểm tra bài viết!",
-				Error:   checkBlogExisted.Error(),
+				Message: "Lỗi hệ thống!",
+				Error:   err.Error(),
 			})
 			return
 		}
@@ -756,156 +773,150 @@ func CreateComment(c *gin.Context) {
 			"_id":        req.ParentID,
 			"deleted_at": bson.M{"$exists": false},
 		}
-		checkParentExisted := commentEntry.First(filter)
-		if checkParentExisted != nil {
-			if errors.Is(checkParentExisted, mongo.ErrNoDocuments) {
-				c.JSON(http.StatusNotFound, dto.ApiResponse{
-					Status:  http.StatusNotFound,
-					Message: "Comment cha không tồn tại hoặc đã bị xóa!",
-					Error:   checkParentExisted.Error(),
-				})
-				return
-			}
+		switch err := commentEntry.First(filter); {
+		case err == nil:
+		case errors.Is(err, mongo.ErrNoDocuments):
+			c.JSON(http.StatusNotFound, dto.ApiResponse{
+				Status:  http.StatusNotFound,
+				Message: "Comment cha không tồn tại hoặc đã bị xóa!",
+				Error:   err.Error(),
+			})
+			return
+		default:
 			c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 				Status:  http.StatusInternalServerError,
-				Message: "Lỗi do hệ thống!",
-				Error:   checkParentExisted.Error(),
+				Message: "Lỗi hệ thống khi kiểm tra comment cha!",
+				Error:   err.Error(),
 			})
 			return
 		}
 	}
 
-	// CHUẨN BỊ DỮ LIỆU MEDIAS
-	newCommentID := primitive.NewObjectID()
-	newMedias := []collections.Media{}
-	commentMedias := []struct {
-		Type   consts.MediaFormat `bson:"type" json:"type"`
-		Url    string             `bson:"url" json:"url"`
-		Status consts.MediaStatus `bson:"status" json:"status"`
-	}{}
-
-	for _, reqMedia := range req.Medias {
-		commentMedias = append(commentMedias, struct {
-			Type   consts.MediaFormat `bson:"type" json:"type"`
-			Url    string             `bson:"url" json:"url"`
-			Status consts.MediaStatus `bson:"status" json:"status"`
-		}{
-			Type:   reqMedia.Type,
-			Url:    reqMedia.Url,
-			Status: reqMedia.Status,
-		})
-		if reqMedia.Status == consts.MediaStatusSuccess {
-			newMedia := collections.Media{
-				ID:             primitive.NewObjectID(),
-				Url:            reqMedia.Url,
-				PublicUrlId:    reqMedia.PublicUrlId,
-				Type:           reqMedia.Type,
-				Status:         "active",
-				CollectionName: "comments",
-				DocumentId:     newCommentID,
-			}
-			newMedias = append(newMedias, newMedia)
-		}
-	}
-
-	// LƯU MEDIAS
-	if len(newMedias) > 0 {
-		var (
-			mediaEntry = &collections.Media{}
-			mediaErr   error
-		)
-
-		const (
-			maxRetries  = 3
-			baseBackoff = 100 * time.Millisecond
-		)
-
-		// Vòng lặp Retry
-		for i := 0; i < maxRetries; i++ {
-			opts := options.InsertMany().SetOrdered(false)
-			mediaErr = mediaEntry.CreateMany(newMedias, opts)
-
-			if mediaErr == nil {
-				break
-			}
-
-			if !mongo.IsTimeout(mediaErr) && !mongo.IsNetworkError(mediaErr) {
-				break
-			}
-
-			log.Printf("CreateComment (Media): lỗi tạm thời (lần %d): %v. Đang thử lại...", i+1, mediaErr)
-
-			if i == maxRetries-1 {
-				break
-			}
-
-			backoff := baseBackoff * time.Duration(1<<i)
-			time.Sleep(backoff)
-		}
-
-		// Kiểm tra lỗi cuối cùng sau khi thoát vòng lặp
-		if mediaErr != nil {
-			c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-				Status:  http.StatusInternalServerError,
-				Message: "Lỗi do hệ thống khi lưu media sau nhiều lần thử!",
-				Error:   mediaErr.Error(),
-			})
-			return
-		}
-	}
-
-	// CHUẨN BỊ DỮ LIỆU COMMENT CHÍNH
+	// Tạo comment mới
 	now := time.Now()
 	newComment := collections.Comment{
-		ID:          newCommentID,
 		ParentID:    req.ParentID,
 		Content:     req.Content,
 		ContentHTML: req.ContentHTML,
-		BlogID:      req.BlogID,
-		Medias:      commentMedias,
+		DocumentID:  req.DocumentID,
 		IsEdit:      false,
 		CreatedAt:   now,
 		CreatedBy:   creatorObjectId,
 		UpdatedAt:   now,
 		UpdatedBy:   creatorObjectId,
 		Category:    req.Category,
-
-		ReplyCount: 0,
+		ReplyCount:  0,
 	}
 
-	// LƯU COMMENT CHÍNH
-	err := newComment.Create()
+	//Kiểm tra các media có phải là media hợp le
+	mediaIDs := []primitive.ObjectID{}
+	if len(req.MediaIds) > 0 {
+		existedMediaIDMap := make(map[primitive.ObjectID]struct{})
+		validMediaFilter := bson.M{
+			"_id": bson.M{
+				"$in": req.MediaIds,
+			},
+		}
+		medias, err := mediaEntry.Find(nil, validMediaFilter)
+		for _, media := range medias {
+			existedMediaIDMap[media.ID] = struct{}{}
+		}
+		if err != nil {
+			utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+			return
+		}
+		invalidMeida := []string{}
+		for _, mediaID := range req.MediaIds {
+			if _, ok := existedMediaIDMap[mediaID]; !ok {
+				invalidMeida = append(invalidMeida, mediaID.Hex())
+			}
+		}
+		if len(medias) != len(req.MediaIds) {
+			utils.ResponseError(c, http.StatusBadRequest, "", fmt.Errorf("MediaIDs [%s] không hợp lệ", strings.Join(invalidMeida, ", ")))
+			return
+		}
+	}
 
-	// XỬ LÝ KẾT QUẢ TRẢ VỀ
-	switch {
-	case err == nil:
-		//Cập nhật reply count cho comment cha
-		if !newComment.ParentID.IsZero() {
-			go func(parentID primitive.ObjectID) {
+	if len(mediaIDs) > 0 {
+		newComment.MediaIds = mediaIDs
+	}
+
+	// Transaction
+	db := database.GetDB()
+	session, err := db.Client().StartSession()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi khi bắt đầu transaction!",
+			Error:   err.Error(),
+		})
+		return
+	}
+	defer session.EndSession(c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Transaction giống DeleteComment
+	err = mongo.WithSession(ctx, session, func(sessCtx mongo.SessionContext) error {
+		_, err := sessCtx.WithTransaction(sessCtx, func(sessCtx mongo.SessionContext) (interface{}, error) {
+			// 1. Update media
+			if len(req.MediaIds) > 0 {
+				mediaFilter := bson.M{
+					"_id":    bson.M{"$in": req.MediaIds},
+					"status": "PENDING",
+				}
+				mediaUpdate := bson.M{"$set": bson.M{"status": "SUCCESS"}}
+
+				const baseBackoff = 100 * time.Millisecond
+				for i := 0; i < maxRetry; i++ {
+					mediaErr := mediaEntry.UpdateMany(sessCtx, mediaFilter, mediaUpdate)
+					if mediaErr == nil {
+						break
+					}
+					if !mongo.IsTimeout(mediaErr) && !mongo.IsNetworkError(mediaErr) {
+						return nil, mediaErr
+					}
+					time.Sleep(baseBackoff * time.Duration(1<<i))
+				}
+			}
+
+			// 2. Create comment
+			if err := newComment.Create(sessCtx); err != nil {
+				return nil, err
+			}
+
+			// 3. Update reply_count comment cha
+			if !newComment.ParentID.IsZero() {
 				commentParentEntry := &collections.Comment{}
-				filterParent := bson.M{"_id": parentID}
+				filterParent := bson.M{"_id": newComment.ParentID}
 				updateParent := bson.M{"$inc": bson.M{"reply_count": 1}}
 				for i := 0; i < maxRetry; i++ {
-					retryErr := commentParentEntry.Update(filterParent, updateParent)
+					retryErr := commentParentEntry.Update(sessCtx, filterParent, updateParent)
 					if retryErr == nil {
 						break
 					}
 				}
-			}(newComment.ParentID)
-		}
+			}
 
-		comments := collections.Comments{}
-		err = newComment.Preload(comments, "AccountFirst")
+			return nil, nil
+		})
+		return err
+	})
 
+	// XỬ LÝ KẾT QUẢ TRẢ VỀ
+	switch {
+	case err == nil:
+		err = newComment.Preload(nil, "AccountFirst", "MediaFirst")
 		c.JSON(http.StatusCreated, dto.ApiResponse{
 			Status:  http.StatusCreated,
-			Message: "tạo bình luận thành công.",
+			Message: "Tạo bình luận thành công.",
 			Data:    utils.PrettyJSON(newComment.ParseEntry()),
 		})
 	default:
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
-			Message: "Lỗi do hệ thống!",
+			Message: "Lỗi do hệ thống khi tạo comment với transaction!",
 			Error:   err.Error(),
 		})
 	}
@@ -915,11 +926,18 @@ func UpdateComment(c *gin.Context) {
 	var (
 		commentEntry *collections.Comment = &collections.Comment{}
 		mediaEntry   *collections.Media   = &collections.Media{}
+		maxRetry                          = 3
 	)
 
 	// LẤY ID NGƯỜI CẬP NHẬT
 	updatorObjectId, ok := utils.GetAccountID(c)
 	if !ok {
+		return
+	}
+
+	// Lấy roles từ context
+	roles, err := utils.GetRoles(c)
+	if err != nil {
 		return
 	}
 
@@ -946,7 +964,7 @@ func UpdateComment(c *gin.Context) {
 	}
 
 	//Validate dữ liệu đầu vào
-	if invalidErrors := dto.ValidateCommentUpdate(req); len(invalidErrors) > 0 {
+	if invalidErrors := utils.ValidateCommentUpdate(req); len(invalidErrors) > 0 {
 		c.JSON(http.StatusBadRequest, dto.ApiResponse{
 			Status:  http.StatusBadRequest,
 			Message: "Lỗi nhập sai dữ liệu!",
@@ -961,30 +979,28 @@ func UpdateComment(c *gin.Context) {
 		"deleted_at": bson.M{"$exists": false},
 	}
 
-	checkExisted := commentEntry.First(filterComment)
-	if checkExisted != nil {
-		if errors.Is(checkExisted, mongo.ErrNoDocuments) {
-			c.JSON(http.StatusNotFound, dto.ApiResponse{
-				Status:  http.StatusNotFound,
-				Message: "Bình luận không tồn tại hoặc đã bị xóa!",
-				Error:   checkExisted.Error(),
-			})
-			return
-		}
+	err = commentEntry.First(filterComment)
+	switch {
+	case err == nil:
+	case errors.Is(err, mongo.ErrNoDocuments):
+		c.JSON(http.StatusNotFound, dto.ApiResponse{
+			Status:  http.StatusNotFound,
+			Message: "Bình luận không tồn tại hoặc đã bị xóa!",
+			Error:   err.Error(),
+		})
+		return
+	default:
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
 			Message: "Lỗi do hệ thống khi kiểm tra bình luận!",
-			Error:   checkExisted.Error(),
+			Error:   err.Error(),
 		})
 		return
 	}
 
 	// KIỂM TRA QUYỀN SỞ HỮU
-	if commentEntry.CreatedBy != updatorObjectId {
-		c.JSON(http.StatusForbidden, dto.ApiResponse{
-			Status:  http.StatusForbidden,
-			Message: "Bạn không có quyền chỉnh sửa bình luận này!",
-		})
+	if !utils.CanModifyResource(commentEntry.CreatedBy, updatorObjectId, roles) {
+		utils.ResponseError(c, http.StatusForbidden, "Bạn không có quyền chỉnh sửa bình luận này!", nil)
 		return
 	}
 
@@ -997,93 +1013,99 @@ func UpdateComment(c *gin.Context) {
 	if req.Content != nil {
 		setData["content"] = *req.Content
 	}
+
 	if req.ContentHTML != nil {
 		setData["content_html"] = *req.ContentHTML
 	}
 
-	if req.Medias != nil {
-		oldMediaUrls := make(map[string]bool)
-		for _, m := range commentEntry.Medias {
-			oldMediaUrls[m.Url] = true
+	oldMediaIDs := make(map[primitive.ObjectID]bool)
+	newMediaIDs := make(map[primitive.ObjectID]bool)
+	mediaIdsToUpdate := []primitive.ObjectID{}
+	mediaIdsToDelete := []primitive.ObjectID{}
+
+	if req.MediaIds != nil {
+		for _, m := range commentEntry.MediaIds {
+			oldMediaIDs[m] = true
 		}
-
-		newMediaUrls := make(map[string]bool)
-		newMediasToInsert := []collections.Media{}
-		finalCommentMedias := []struct {
-			Type   consts.MediaFormat `bson:"type" json:"type"`
-			Url    string             `bson:"url" json:"url"`
-			Status consts.MediaStatus `bson:"status" json:"status"`
-		}{}
-		urlsToDeactivate := []string{}
-
-		for _, reqMedia := range *req.Medias {
-			newMediaUrls[reqMedia.Url] = true
-
-			finalCommentMedias = append(finalCommentMedias, struct {
-				Type   consts.MediaFormat `bson:"type" json:"type"`
-				Url    string             `bson:"url" json:"url"`
-				Status consts.MediaStatus `bson:"status" json:"status"`
-			}{
-				Type:   reqMedia.Type,
-				Url:    reqMedia.Url,
-				Status: reqMedia.Status,
-			})
-
-			// Nếu URL này là mới VÀ thành công
-			if !oldMediaUrls[reqMedia.Url] && reqMedia.Status == consts.MediaStatusSuccess {
-				newMediasToInsert = append(newMediasToInsert, collections.Media{
-					ID:             primitive.NewObjectID(),
-					Url:            reqMedia.Url,
-					PublicUrlId:    reqMedia.PublicUrlId,
-					Type:           reqMedia.Type,
-					Status:         "active",
-					CollectionName: "comments",
-					DocumentId:     commentObjectId,
-				})
+		for _, m := range *req.MediaIds {
+			newMediaIDs[m] = true
+			if !oldMediaIDs[m] {
+				mediaIdsToUpdate = append(mediaIdsToUpdate, m)
 			}
 		}
-
-		// Lặp qua media CŨ để tìm cái bị xóa
-		for oldUrl := range oldMediaUrls {
-			if !newMediaUrls[oldUrl] {
-				urlsToDeactivate = append(urlsToDeactivate, oldUrl)
+		for oldID := range oldMediaIDs {
+			if !newMediaIDs[oldID] {
+				mediaIdsToDelete = append(mediaIdsToDelete, oldID)
 			}
 		}
-
-		// Cập nhật mảng media trong $set
-		setData["medias"] = finalCommentMedias
-
-		// LƯU MEDIA MỚI
-		if len(newMediasToInsert) > 0 {
-			if err := createMediasWithRetry(mediaEntry, newMediasToInsert); err != nil {
-				c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-					Status:  http.StatusInternalServerError,
-					Message: "Lỗi hệ thống khi lưu media mới!",
-					Error:   err.Error(),
-				})
-				return
-			}
-		}
-
-		// VÔ HIỆU HÓA MEDIA CŨ
-		if len(urlsToDeactivate) > 0 {
-			if err := deactivateMediasWithRetry(mediaEntry, urlsToDeactivate); err != nil {
-				c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-					Status:  http.StatusInternalServerError,
-					Message: "Lỗi hệ thống khi vô hiệu hóa media cũ!",
-					Error:   err.Error(),
-				})
-				return
-			}
-		}
+		setData["media_ids"] = *req.MediaIds
 	}
 
-	// CHUẨN BỊ DỮ LIỆU UPDATE COMMENT CHÍNH
 	updateData := bson.M{"$set": setData}
 
-	// LƯU COMMENT CHÍNH
-	err = commentEntry.Update(filterComment, updateData)
-	// XỬ LÝ KẾT QUẢ TRẢ VỀ
+	db := database.GetDB()
+	session, err := db.Client().StartSession()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi khi bắt đầu session!",
+			Error:   err.Error(),
+		})
+		return
+	}
+	defer session.EndSession(c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	err = mongo.WithSession(ctx, session, func(sessCtx mongo.SessionContext) error {
+		_, err := sessCtx.WithTransaction(sessCtx, func(sessCtx mongo.SessionContext) (interface{}, error) {
+			// 1. Cập nhật media mới
+			if len(mediaIdsToUpdate) > 0 {
+				mediaFilter := bson.M{
+					"_id":    bson.M{"$in": mediaIdsToUpdate},
+					"status": "PENDING",
+				}
+				mediaUpdate := bson.M{"$set": bson.M{"status": "SUCCESS"}}
+				for i := 0; i < maxRetry; i++ {
+					if err := mediaEntry.UpdateMany(sessCtx, mediaFilter, mediaUpdate); err != nil {
+						if !mongo.IsTimeout(err) && !mongo.IsNetworkError(err) {
+							return nil, err
+						}
+						time.Sleep(time.Duration(100*(1<<i)) * time.Millisecond)
+					} else {
+						break
+					}
+				}
+			}
+
+			// 2. Vô hiệu hóa media cũ
+			if len(mediaIdsToDelete) > 0 {
+				mediaFilter := bson.M{"_id": bson.M{"$in": mediaIdsToDelete}}
+				mediaUpdate := bson.M{"$set": bson.M{"status": "DELETED"}}
+				for i := 0; i < maxRetry; i++ {
+					if err := mediaEntry.UpdateMany(sessCtx, mediaFilter, mediaUpdate); err != nil {
+						if !mongo.IsTimeout(err) && !mongo.IsNetworkError(err) {
+							return nil, err
+						}
+						time.Sleep(time.Duration(100*(1<<i)) * time.Millisecond)
+					} else {
+						break
+					}
+				}
+			}
+
+			// 3. Update comment chính
+			if err := commentEntry.Update(sessCtx, filterComment, updateData); err != nil {
+				return nil, err
+			}
+
+			return nil, nil
+		})
+		return err
+	})
+
+	// Response cuối cùng dùng switch
 	switch {
 	case err == nil:
 		c.JSON(http.StatusOK, dto.ApiResponse{
@@ -1099,7 +1121,7 @@ func UpdateComment(c *gin.Context) {
 	default:
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
-			Message: "Lỗi do hệ thống khi cập nhật bình luận!",
+			Message: "Lỗi hệ thống khi cập nhật bình luận!",
 			Error:   err.Error(),
 		})
 	}
@@ -1128,19 +1150,27 @@ func SoftDeleteComment(c *gin.Context) {
 		return
 	}
 
+	roles, err := utils.GetRoles(c)
+	if err != nil {
+		utils.ResponseError(c, http.StatusBadRequest, "", err.Error())
+		return
+	}
+
 	filterFind := bson.M{
 		"_id":        commentID,
 		"deleted_at": bson.M{"$exists": false},
 	}
-	// Lấy comment và gán vào commentEntry
-	if err := commentEntry.First(filterFind); err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			c.JSON(http.StatusNotFound, dto.ApiResponse{
-				Status:  http.StatusNotFound,
-				Message: "Bình luận không tồn tại hoặc đã bị xóa!",
-			})
-			return
-		}
+
+	// Lấy comment
+	switch err = commentEntry.First(filterFind); {
+	case err == nil:
+	case errors.Is(err, mongo.ErrNoDocuments):
+		c.JSON(http.StatusNotFound, dto.ApiResponse{
+			Status:  http.StatusNotFound,
+			Message: "Bình luận không tồn tại hoặc đã bị xóa!",
+		})
+		return
+	default:
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
 			Message: "Lỗi hệ thống khi tìm bình luận!",
@@ -1149,16 +1179,13 @@ func SoftDeleteComment(c *gin.Context) {
 		return
 	}
 
-	if commentEntry.CreatedBy != deleterObjectId {
-		c.JSON(http.StatusForbidden, dto.ApiResponse{
-			Status:  http.StatusForbidden,
-			Message: "Bạn không có quyền xóa bình luận này!",
-		})
+	//Kiềm tra có quyền xóa comment này không
+	if !utils.CanModifyResource(commentEntry.CreatedBy, deleterObjectId, roles) {
+		utils.ResponseError(c, http.StatusForbidden, "Bạn không có quyền chỉnh sửa bình luận này!", nil)
 		return
 	}
 
 	parentIDToUpdate := commentEntry.ParentID
-	//parentMediaUrls := commentEntry.Medias
 
 	//THỰC HIỆN XÓA MỀM
 	now := time.Now()
@@ -1177,7 +1204,7 @@ func SoftDeleteComment(c *gin.Context) {
 	}
 
 	// Thực thi lệnh xóa mềm hàng loạt
-	res, err := commentEntry.UpdateMany(filterDelete, updateDelete)
+	res, err := commentEntry.UpdateMany(nil, filterDelete, updateDelete)
 
 	switch {
 	case err != nil:
@@ -1199,7 +1226,7 @@ func SoftDeleteComment(c *gin.Context) {
 				updateParent := bson.M{"$inc": bson.M{"reply_count": -1}}
 
 				for i := 0; i < maxRetry; i++ {
-					retryErr := commentParentEntry.Update(filterParent, updateParent)
+					retryErr := commentParentEntry.Update(nil, filterParent, updateParent)
 					if retryErr == nil {
 						break
 					}
@@ -1214,54 +1241,6 @@ func SoftDeleteComment(c *gin.Context) {
 			Status:  http.StatusOK,
 			Message: "Xóa mềm bình luận và các trả lời thành công.",
 		})
-
-		// Chạy ngầm TẤT CẢ logic dọn dẹp media
-		go func(deletedCommentID primitive.ObjectID) {
-
-			log.Printf("Chạy ngầm dọn dẹp media cho comment %s...", deletedCommentID.Hex())
-			allCommentIDsToDelete := []primitive.ObjectID{deletedCommentID} // Bắt đầu với ID cha
-
-			// Tìm và lấy ID từ tất cả comment con
-			childCommentEntry := &collections.Comment{}
-			filterFindChildren := bson.M{
-				"parent_id":  deletedCommentID,
-				"deleted_at": bson.M{"$exists": true},
-			}
-			findOptions := options.Find().SetProjection(bson.M{"_id": 1})
-
-			childComments, err := childCommentEntry.Find(filterFindChildren, findOptions)
-			if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
-				log.Printf("Lỗi (chạy ngầm) khi tìm con bị xóa: %v", err)
-				return
-			}
-
-			if len(childComments) > 0 {
-				for _, child := range childComments {
-					allCommentIDsToDelete = append(allCommentIDsToDelete, child.ID)
-				}
-			}
-
-			log.Printf("Bắt đầu vô hiệu hóa media cho %d comments (chạy ngầm)...", len(allCommentIDsToDelete))
-			mediaEntry := &collections.Media{}
-
-			filter := bson.M{
-				"document_id":     bson.M{"$in": allCommentIDsToDelete},
-				"collection_name": "comments",
-				"deleted_at":      bson.M{"$exists": false},
-			}
-			update := bson.M{"$set": bson.M{"status": "inactive", "deleted_at": time.Now()}}
-
-			for i := 0; i < maxRetry; i++ {
-				err = mediaEntry.UpdateMany(filter, update)
-				if err == nil {
-					log.Printf("Vô hiệu hóa media (chạy ngầm) thành công.")
-					break
-				}
-				log.Printf("Lỗi khi vô hiệu hóa media (lần %d): %v", i+1, err)
-				time.Sleep(100 * time.Millisecond)
-			}
-
-		}(commentID)
 	}
 }
 
@@ -1282,19 +1261,33 @@ func RestoreComment(c *gin.Context) {
 		return
 	}
 
+	//Lấy id người restore
+	// LẤY ID NGƯỜI XÓA
+	restorerObjectId, ok := utils.GetAccountID(c)
+	if !ok {
+		return
+	}
+
+	roles, err := utils.GetRoles(c)
+	if err != nil {
+		utils.ResponseError(c, http.StatusBadRequest, "", err.Error())
+		return
+	}
+
 	filterFind := bson.M{
 		"_id":        commentID,
 		"deleted_at": bson.M{"$exists": true},
 	}
 	// Gán dữ liệu tìm được vào commentEntry
-	if err := commentEntry.First(filterFind); err != nil {
-		if errors.Is(err, mongo.ErrNoDocuments) {
-			c.JSON(http.StatusNotFound, dto.ApiResponse{
-				Status:  http.StatusNotFound,
-				Message: "Bình luận không tồn tại hoặc chưa bị xóa!",
-			})
-			return
-		}
+	switch err = commentEntry.First(filterFind); {
+	case err == nil:
+	case errors.Is(err, mongo.ErrNoDocuments):
+		c.JSON(http.StatusNotFound, dto.ApiResponse{
+			Status:  http.StatusNotFound,
+			Message: "Bình luận không tồn tại hoặc đã bị xóa!",
+		})
+		return
+	default:
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
 			Message: "Lỗi hệ thống khi tìm bình luận!",
@@ -1302,6 +1295,13 @@ func RestoreComment(c *gin.Context) {
 		})
 		return
 	}
+
+	//Kiểm tra quyền chỉnh sửa
+	if !utils.CanModifyResource(commentEntry.CreatedBy, restorerObjectId, roles) {
+		utils.ResponseError(c, http.StatusForbidden, "Bạn không có quyền chỉnh sửa bình luận này!", nil)
+		return
+	}
+
 	parentIDToUpdate := commentEntry.ParentID
 
 	filterRestore := bson.M{
@@ -1312,6 +1312,10 @@ func RestoreComment(c *gin.Context) {
 		"deleted_at": bson.M{"$exists": true},
 	}
 	updateRestore := bson.M{
+		"$set": bson.M{
+			"updated_at": time.Now(),
+			"updated_by": restorerObjectId,
+		},
 		"$unset": bson.M{
 			"deleted_at": "",
 			"deleted_by": "",
@@ -1319,7 +1323,7 @@ func RestoreComment(c *gin.Context) {
 	}
 
 	// Thực thi lệnh khôi phục hàng loạt
-	res, err := commentEntry.UpdateMany(filterRestore, updateRestore)
+	res, err := commentEntry.UpdateMany(nil, filterRestore, updateRestore)
 
 	switch {
 	case err != nil:
@@ -1338,11 +1342,13 @@ func RestoreComment(c *gin.Context) {
 		if !parentIDToUpdate.IsZero() {
 			go func(parentID primitive.ObjectID) {
 				commentParentEntry := &collections.Comment{}
-				filterParent := bson.M{"_id": parentID}
+				filterParent := bson.M{"_id": parentID, "deleted_at": bson.M{
+					"$exists": false,
+				}}
 				updateParent := bson.M{"$inc": bson.M{"reply_count": 1}} // Tăng 1
 
 				for i := 0; i < maxRetry; i++ {
-					retryErr := commentParentEntry.Update(filterParent, updateParent)
+					retryErr := commentParentEntry.Update(nil, filterParent, updateParent)
 					if retryErr == nil {
 						break
 					}
@@ -1356,68 +1362,26 @@ func RestoreComment(c *gin.Context) {
 			Status:  http.StatusOK,
 			Message: "Khôi phục bình luận và các trả lời thành công.",
 		})
-
-		go func(restoredCommentID primitive.ObjectID) {
-
-			log.Printf("Chạy ngầm kích hoạt media cho comment %s...", restoredCommentID.Hex())
-
-			allCommentIDsToRestore := []primitive.ObjectID{restoredCommentID}
-
-			// Tìm và lấy ID từ tất cả comment con (vừa được khôi phục)
-			childCommentEntry := &collections.Comment{}
-			filterFindChildren := bson.M{
-				"parent_id":  restoredCommentID,
-				"deleted_at": bson.M{"$exists": false},
-			}
-			findOptions := options.Find().SetProjection(bson.M{"_id": 1})
-
-			childComments, err := childCommentEntry.Find(filterFindChildren, findOptions)
-			if err != nil && !errors.Is(err, mongo.ErrNoDocuments) {
-				log.Printf("Lỗi (chạy ngầm) khi tìm con được khôi phục: %v", err)
-				return
-			}
-
-			if len(childComments) > 0 {
-				for _, child := range childComments {
-					allCommentIDsToRestore = append(allCommentIDsToRestore, child.ID)
-				}
-			}
-
-			log.Printf("Bắt đầu khôi phục media cho %d comments (chạy ngầm)...", len(allCommentIDsToRestore))
-			mediaEntry := &collections.Media{}
-
-			filter := bson.M{
-				"document_id":     bson.M{"$in": allCommentIDsToRestore},
-				"collection_name": "comments",
-				"deleted_at":      bson.M{"$exists": true},
-			}
-			update := bson.M{
-				"$set": bson.M{
-					"status": "active",
-				},
-				"$unset": bson.M{
-					"deleted_at": "",
-				}}
-
-			for i := 0; i < maxRetry; i++ {
-				err = mediaEntry.UpdateMany(filter, update)
-				if err == nil {
-					log.Printf("Khôi phục media (chạy ngầm) thành công.")
-					break
-				}
-				log.Printf("Lỗi khi khôi phục media (lần %d): %v", i+1, err)
-				time.Sleep(100 * time.Millisecond)
-			}
-
-		}(commentID)
 	}
 }
 
 func GetCommentReplies(c *gin.Context) {
 	var (
-		commentEntry       = &collections.Comment{}
-		limit        int64 = 10
+		commentEntry = &collections.Comment{}
+		lastId       primitive.ObjectID
+		err          error
 	)
+
+	pagination := dto.GetPagination(c, "primary")
+	if pagination.LastId == "" {
+		lastId = primitive.NilObjectID
+	} else {
+		lastId, err = primitive.ObjectIDFromHex(pagination.LastId)
+		if err != nil {
+			utils.ResponseError(c, http.StatusBadRequest, "", nil)
+			return
+		}
+	}
 
 	parentIDParam := c.Param("id")
 	parentID, err := primitive.ObjectIDFromHex(parentIDParam)
@@ -1429,32 +1393,18 @@ func GetCommentReplies(c *gin.Context) {
 		return
 	}
 
-	lastIDParam := c.Query("last_id")
-	var lastID primitive.ObjectID
-
-	if lastIDParam != "" {
-		lastID, err = primitive.ObjectIDFromHex(lastIDParam)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, dto.ApiResponse{
-				Status:  http.StatusBadRequest,
-				Message: "Last ID không hợp lệ!",
-			})
-			return
-		}
-	}
-
 	filter := bson.M{
 		"parent_id":  parentID,
 		"deleted_at": bson.M{"$exists": false},
 	}
 
-	if !lastID.IsZero() {
-		filter["_id"] = bson.M{"$gt": lastID}
+	if !lastId.IsZero() {
+		filter["_id"] = bson.M{"$gt": lastId}
 	}
 
 	findOptions := options.Find()
 	findOptions.SetSort(bson.D{{"_id", 1}})
-	findOptions.SetLimit(limit + 1)
+	findOptions.SetLimit(int64(pagination.Length) + 1)
 
 	// Thực thi truy vấn
 	comments, err := commentEntry.Find(filter, findOptions)
@@ -1475,7 +1425,7 @@ func GetCommentReplies(c *gin.Context) {
 	}
 
 	//Xử lý preload
-	err = commentEntry.Preload(comments, "AccountFind")
+	err = commentEntry.Preload(comments, "AccountFind", "MediaFind")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
@@ -1490,29 +1440,18 @@ func GetCommentReplies(c *gin.Context) {
 		commentsRes = append(commentsRes, cmt.ParseEntry())
 	}
 
-	// Xử lý kết quả cho hasMore
-	hasMore := false
-	if len(commentsRes) > int(limit) {
-		hasMore = true
-		commentsRes = commentsRes[:limit]
+	pagination.TotalDocs = len(commentsRes)
+
+	if len(commentsRes) > pagination.Length {
+		commentsRes = commentsRes[:pagination.Length]
 	}
 
-	var nextLastID primitive.ObjectID
 	if len(commentsRes) > 0 {
-		nextLastID = comments[len(commentsRes)-1].ID
+		pagination.LastId = comments[len(commentsRes)-1].ID.Hex()
 	}
 
-	// Trả về kết quả
-	c.JSON(http.StatusOK, dto.ApiResponse{
-		Status:  http.StatusOK,
-		Message: "Lấy replies thành công.",
-		Data:    commentsRes,
-		PaginationLoadMore: &dto.PaginationLoadMore{
-			HasMore:     hasMore,
-			NextLastId:  nextLastID,
-			TotalLoaded: len(commentsRes),
-		},
-	})
+	pagination.BuildPagination()
+	utils.ResponseSuccess(c, http.StatusOK, "", commentsRes, &pagination)
 }
 
 func createMediasWithRetry(mediaEntry *collections.Media, medias []collections.Media) error {
@@ -1523,7 +1462,7 @@ func createMediasWithRetry(mediaEntry *collections.Media, medias []collections.M
 	)
 	for i := 0; i < maxRetries; i++ {
 		opts := options.InsertMany().SetOrdered(false)
-		mediaErr = mediaEntry.CreateMany(medias, opts)
+		mediaErr = mediaEntry.CreateMany(nil, medias, opts)
 		if mediaErr == nil {
 			return nil
 		}
@@ -1539,7 +1478,7 @@ func createMediasWithRetry(mediaEntry *collections.Media, medias []collections.M
 	return mediaErr
 }
 
-func deactivateMediasWithRetry(mediaEntry *collections.Media, urls []string) error {
+func deactivateMediasWithRetry(mediaEntry *collections.Media, urls []string, collectionName string) error {
 	var mediaErr error
 	const (
 		maxRetries  = 3
@@ -1548,12 +1487,12 @@ func deactivateMediasWithRetry(mediaEntry *collections.Media, urls []string) err
 
 	filter := bson.M{
 		"url":             bson.M{"$in": urls},
-		"collection_name": "comments",
+		"collection_name": collectionName,
 	}
 	update := bson.M{"$set": bson.M{"status": "inactive", "deleted_at": time.Now()}}
 
 	for i := 0; i < maxRetries; i++ {
-		mediaErr = mediaEntry.UpdateMany(filter, update)
+		mediaErr = mediaEntry.UpdateMany(nil, filter, update)
 		if mediaErr == nil {
 			return nil
 		}

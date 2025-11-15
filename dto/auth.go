@@ -38,3 +38,7 @@ func ValidateLoginRequest(req LoginRequest) []string {
 
 	return nil
 }
+
+type RenewAcessTokenRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}

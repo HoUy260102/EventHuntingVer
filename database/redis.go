@@ -13,7 +13,11 @@ type RedisClient struct {
 	Ctx    context.Context
 }
 
-func NewRedisClient() (*RedisClient, error) {
+var (
+	redisClient *RedisClient
+)
+
+func NewRedisClient() error {
 	client := redis.NewClient(&redis.Options{
 		Addr:     configs.GetRedisAddr(),
 		Password: configs.GetRedisPassword(),
@@ -23,12 +27,17 @@ func NewRedisClient() (*RedisClient, error) {
 	ctx := context.Background()
 	if _, err := client.Ping(ctx).Result(); err != nil {
 		log.Printf("Kết nối Redis thất bại: %v", err)
-		return nil, err
+		return err
 	}
 
 	log.Println("Kết nối Redis thành công!")
-	return &RedisClient{
+	redisClient = &RedisClient{
 		Client: client,
 		Ctx:    ctx,
-	}, nil
+	}
+	return nil
+}
+
+func GetRedisClient() *RedisClient {
+	return redisClient
 }

@@ -1,6 +1,6 @@
 server:
   port: ${SERVER_PORT}
-
+  domain: ${SERVER_DOMAIN}
 database:
   uri: ${MONGODB_CONNECTION_URI}
   name: ${MONGODB_CONNECTION_NAME}
@@ -39,3 +39,11 @@ cloudinary:
 
 session:
   secret: ${SESSION_SECRET}
+
+pagination:
+  primary:
+    default_length: 12
+    default_max_length: 50
+  secondary:
+    default_length: 15
+    default_max_length: 100

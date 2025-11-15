@@ -23,8 +23,8 @@ import (
 )
 
 var RoleDataGroups = map[string]string{
-	"User":      "user_infor",
-	"Organizer": "organizer_infor",
+	"User":      "user_info",
+	"Organizer": "organizer_info",
 }
 
 func CreateAccount(c *gin.Context) {
@@ -83,18 +83,18 @@ func CreateAccount(c *gin.Context) {
 	}
 
 	allowedGroup, ownsDataGroup := RoleDataGroups[roleEntry.Name]
-	if createData.UserInfor != nil && (!ownsDataGroup || allowedGroup != "user_infor") {
+	if createData.UserInfo != nil && (!ownsDataGroup || allowedGroup != "user_info") {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  http.StatusBadRequest,
-			"message": "Vai trò '" + roleEntry.Name + "' không được phép cập nhật 'user_infor'",
+			"message": "Vai trò '" + roleEntry.Name + "' không được phép cập nhật 'user_info'",
 		})
 		return
 	}
 
-	if createData.OrganizerInfor != nil && (!ownsDataGroup || allowedGroup != "organizer_infor") {
+	if createData.OrganizerInfo != nil && (!ownsDataGroup || allowedGroup != "organizer_info") {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  http.StatusBadRequest,
-			"message": "Vai trò '" + roleEntry.Name + "' không được phép cập nhật 'organizer_infor'",
+			"message": "Vai trò '" + roleEntry.Name + "' không được phép cập nhật 'organizer_info'",
 		})
 		return
 	}
@@ -155,29 +155,29 @@ func CreateAccount(c *gin.Context) {
 		newAccount.Address = *createData.Address
 	}
 
-	if createData.UserInfor != nil {
+	if createData.UserInfo != nil {
 		var userInfo collections.User
-		if createData.UserInfor.Dob != nil {
-			userInfo.Dob = *createData.UserInfor.Dob
+		if createData.UserInfo.Dob != nil {
+			userInfo.Dob = *createData.UserInfo.Dob
 		}
-		if createData.UserInfor.IsMale != nil {
-			userInfo.IsMale = *createData.UserInfor.IsMale
+		if createData.UserInfo.IsMale != nil {
+			userInfo.IsMale = *createData.UserInfo.IsMale
 		}
-		newAccount.UserInfor = &userInfo
+		newAccount.UserInfo = &userInfo
 	}
 
-	if createData.OrganizerInfor != nil {
+	if createData.OrganizerInfo != nil {
 		var orgInfo collections.Organizer
-		if createData.OrganizerInfor.Decription != nil {
-			orgInfo.Decription = *createData.OrganizerInfor.Decription
+		if createData.OrganizerInfo.Decription != nil {
+			orgInfo.Decription = *createData.OrganizerInfo.Decription
 		}
-		if createData.OrganizerInfor.WebsiteUrl != nil {
-			orgInfo.WebsiteUrl = *createData.OrganizerInfor.WebsiteUrl
+		if createData.OrganizerInfo.WebsiteUrl != nil {
+			orgInfo.WebsiteUrl = *createData.OrganizerInfo.WebsiteUrl
 		}
-		if createData.OrganizerInfor.ContactName != nil {
-			orgInfo.ContactName = *createData.OrganizerInfor.ContactName
+		if createData.OrganizerInfo.ContactName != nil {
+			orgInfo.ContactName = *createData.OrganizerInfo.ContactName
 		}
-		newAccount.OrganizerInfor = &orgInfo
+		newAccount.OrganizerInfo = &orgInfo
 	}
 
 	// Gọi Collection để tạo mới
@@ -287,18 +287,18 @@ func UpdateAccount(c *gin.Context) {
 	}
 
 	allowedGroup, ownsDataGroup := RoleDataGroups[roleEntry.Name]
-	if req.UserInfor != nil && (!ownsDataGroup || allowedGroup != "user_infor") {
+	if req.UserInfo != nil && (!ownsDataGroup || allowedGroup != "user_info") {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  http.StatusBadRequest,
-			"message": "Vai trò '" + roleEntry.Name + "' không được phép cập nhật 'user_infor'",
+			"message": "Vai trò '" + roleEntry.Name + "' không được phép cập nhật 'user_info'",
 		})
 		return
 	}
 
-	if req.OrganizerInfor != nil && (!ownsDataGroup || allowedGroup != "organizer_infor") {
+	if req.OrganizerInfo != nil && (!ownsDataGroup || allowedGroup != "organizer_info") {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  http.StatusBadRequest,
-			"message": "Vai trò '" + roleEntry.Name + "' không được phép cập nhật 'organizer_infor'",
+			"message": "Vai trò '" + roleEntry.Name + "' không được phép cập nhật 'organizer_info'",
 		})
 		return
 	}
@@ -319,27 +319,27 @@ func UpdateAccount(c *gin.Context) {
 		setData["address"] = *req.Address
 	}
 
-	// Cập nhật trường con của UserInfor
-	if req.UserInfor != nil {
-		if req.UserInfor.Dob != nil {
-			setData["user_infor.dob"] = *req.UserInfor.Dob
+	// Cập nhật trường con của UserInfo
+	if req.UserInfo != nil {
+		if req.UserInfo.Dob != nil {
+			setData["user_info.dob"] = *req.UserInfo.Dob
 		}
-		if req.UserInfor.IsMale != nil {
-			setData["user_infor.is_male"] = *req.UserInfor.IsMale
+		if req.UserInfo.IsMale != nil {
+			setData["user_info.is_male"] = *req.UserInfo.IsMale
 		}
 	}
 
-	// Cập nhật trường con của OrganizerInfor
-	if req.OrganizerInfor != nil {
-		if req.OrganizerInfor.Decription != nil {
-			setData["organizer_infor.decription"] = *req.OrganizerInfor.Decription
+	// Cập nhật trường con của OrganizerInfo
+	if req.OrganizerInfo != nil {
+		if req.OrganizerInfo.Decription != nil {
+			setData["organizer_info.decription"] = *req.OrganizerInfo.Decription
 		}
-		if req.OrganizerInfor.WebsiteUrl != nil {
+		if req.OrganizerInfo.WebsiteUrl != nil {
 			// Validation của bạn đã xử lý logic cho phép "" (để xóa)
-			setData["organizer_infor.website_url"] = *req.OrganizerInfor.WebsiteUrl
+			setData["organizer_info.website_url"] = *req.OrganizerInfo.WebsiteUrl
 		}
-		if req.OrganizerInfor.ContactName != nil {
-			setData["organizer_infor.contact_name"] = *req.OrganizerInfor.ContactName
+		if req.OrganizerInfo.ContactName != nil {
+			setData["organizer_info.contact_name"] = *req.OrganizerInfo.ContactName
 		}
 	}
 
@@ -486,7 +486,7 @@ func UploadAvatar(c *gin.Context) {
 	cld := utils.GetCloudinary()
 
 	if accountEntry.AvatarUrl != "" {
-		err = utils.DeleteFileCloudinary(cld, accountEntry.PublicUrlId)
+		err = utils.DeleteFileCloudinary(cld, accountEntry.AvatarUrlId)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"status":  http.StatusInternalServerError,
@@ -522,7 +522,7 @@ func UploadAvatar(c *gin.Context) {
 		baseUpdate = bson.M{
 			"$set": bson.M{
 				"avatar_url":    uploadResult.URL,
-				"public_url_id": uploadResult.PublicID,
+				"avatar_url_id": uploadResult.PublicID,
 				"updated_at":    time.Now(),
 				"updated_by":    updatorObjectId,
 			},

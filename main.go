@@ -18,7 +18,7 @@ func main() {
 		fmt.Println(err)
 	}
 	//Kết nối đến redis
-	redisClient, err := database.NewRedisClient()
+	err = database.NewRedisClient()
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -27,8 +27,10 @@ func main() {
 	if err != nil {
 		fmt.Println(err)
 	}
+	//Kêt nối google
+	utils.InitOAuth()
 	//Đăng ký router
-	if err := routers.SetupRouter(redisClient.Client); err != nil {
+	if err := routers.SetupRouter(); err != nil {
 		fmt.Println("Server chạy thất bại: %v", err)
 	}
 }

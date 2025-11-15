@@ -3,14 +3,17 @@ package controllers
 import (
 	"EventHunting/collections"
 	"EventHunting/consts"
+	"EventHunting/database"
 	"EventHunting/dto"
 	"EventHunting/utils"
+	"context"
 	"errors"
-	"log"
+	"fmt"
 	"math"
 	"net/http"
-	"slices"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -20,31 +23,13 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// import (
-//
-//	"EventHunting/collections"
-//	"EventHunting/dto"
-//	"EventHunting/utils"
-//	"context"
-//	"errors"
-//	"log"
-//	"math"
-//	"net/http"
-//	"slices"
-//	"strconv"
-//	"time"
-//
-//	"github.com/cloudinary/cloudinary-go/v2"
-//	"github.com/gin-gonic/gin"
-//	"go.mongodb.org/mongo-driver/bson"
-//	"go.mongodb.org/mongo-driver/bson/primitive"
-//	"go.mongodb.org/mongo-driver/mongo"
-//	"go.mongodb.org/mongo-driver/mongo/options"
-//
-// )
 func CreateBlog(c *gin.Context) {
-	var req dto.CreateBlogRequest
-
+	var (
+		mediaEntry = &collections.Media{}
+		mediaIDs   = []primitive.ObjectID{}
+		req        dto.CreateBlogRequest
+		err        error
+	)
 	// Bind và Validate JSON input
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -70,8 +55,10 @@ func CreateBlog(c *gin.Context) {
 		return
 	}
 
+	newBlogId := primitive.NewObjectID()
 	// Map DTO
 	newBlog := collections.Blog{
+		ID:            newBlogId,
 		Title:         req.Title,
 		Content:       req.Content,
 		ContentHtml:   req.ContentHtml,
@@ -88,298 +75,376 @@ func CreateBlog(c *gin.Context) {
 		newBlog.TagIds = *req.TagIds
 	}
 
-	if req.ThumbnailLink != nil {
-		newBlog.ThumbnailLink = *req.ThumbnailLink
-	}
-
-	if req.ThumbnailPublicId != nil {
-		newBlog.ThumbnailPublicId = *req.ThumbnailPublicId
-	}
-
-	if req.Medias != nil && len(*req.Medias) > 0 {
-		newMedias := []collections.Media{}
-		blogMedias := []struct {
-			Type   consts.MediaFormat `bson:"type" json:"type"`
-			Url    string             `bson:"url" json:"url"`
-			Status consts.MediaStatus `bson:"status" json:"status"`
-		}{}
-
-		for _, reqMedia := range *req.Medias {
-			blogMedias = append(blogMedias, struct {
-				Type   consts.MediaFormat `bson:"type" json:"type"`
-				Url    string             `bson:"url" json:"url"`
-				Status consts.MediaStatus `bson:"status" json:"status"`
-			}{
-				Type:   reqMedia.Type,
-				Url:    reqMedia.Url,
-				Status: reqMedia.Status,
-			})
-			if reqMedia.Status == consts.MediaStatusSuccess {
-				newMedia := collections.Media{
-					ID:             primitive.NewObjectID(),
-					Url:            reqMedia.Url,
-					PublicUrlId:    reqMedia.PublicUrlId,
-					Type:           reqMedia.Type,
-					Status:         "active",
-					CollectionName: "blogs",
-				}
-				newMedias = append(newMedias, newMedia)
-			}
+	if req.ThumbnailID != nil {
+		err = mediaEntry.First(nil, bson.M{
+			"_id": req.ThumbnailID,
+		})
+		switch {
+		case err == nil:
+		case errors.Is(err, mongo.ErrNoDocuments):
+			utils.ResponseError(c, http.StatusBadRequest, "", fmt.Errorf("Không tìm thấy thumbnail: %v", err.Error()))
+			return
+		default:
+			utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+			return
 		}
+		if mediaEntry.Type != consts.MEDIA_IMAGE {
+			utils.ResponseError(c, http.StatusBadRequest, "", "Thumbnail phải là ảnh")
+			return
+		}
+		newBlog.ThumbnailUrl = mediaEntry.Url
+		newBlog.ThumbnailID = *req.ThumbnailID
+		mediaIDs = append(mediaIDs, *req.ThumbnailID)
+	}
 
-		// LƯU MEDIAS
-		if len(newMedias) > 0 {
-			var (
-				mediaEntry = &collections.Media{}
-				mediaErr   error
-			)
-
-			const (
-				maxRetries  = 3
-				baseBackoff = 100 * time.Millisecond
-			)
-
-			// Vòng lặp Retry
-			for i := 0; i < maxRetries; i++ {
-				opts := options.InsertMany().SetOrdered(false)
-				mediaErr = mediaEntry.CreateMany(newMedias, opts)
-
-				if mediaErr == nil {
-					break
-				}
-
-				log.Printf("CreateBlog (Media): lỗi tạm thời (lần %d): %v. Đang thử lại...", i+1, mediaErr)
-
-				//Đỡ phải chạy sleep
-				if i == maxRetries-1 {
-					break
-				}
-
-				backoff := baseBackoff * time.Duration(1<<i)
-				time.Sleep(backoff)
+	//Logic kiểm tra ảnh có tồn tại
+	if req.MediaIDs != nil {
+		if len(*req.MediaIDs) > 0 {
+			existedMediaIDMap := make(map[primitive.ObjectID]struct{})
+			validMediaFilter := bson.M{
+				"_id": bson.M{
+					"$in": req.MediaIDs,
+				},
 			}
-
-			// Kiểm tra lỗi cuối cùng sau khi thoát vòng lặp
-			if mediaErr != nil {
-				c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-					Status:  http.StatusInternalServerError,
-					Message: "Lỗi do hệ thống khi lưu media sau nhiều lần thử!",
-					Error:   mediaErr.Error(),
-				})
+			medias, err := mediaEntry.Find(nil, validMediaFilter)
+			for _, media := range medias {
+				existedMediaIDMap[media.ID] = struct{}{}
+			}
+			if err != nil {
+				utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+				return
+			}
+			invalidMeida := []string{}
+			for _, mediaID := range *req.MediaIDs {
+				if _, ok := existedMediaIDMap[mediaID]; !ok {
+					invalidMeida = append(invalidMeida, mediaID.Hex())
+				}
+			}
+			if len(medias) != len(*req.MediaIDs) {
+				utils.ResponseError(c, http.StatusBadRequest, "", fmt.Errorf("MediaIDs [%s] không hợp lệ", strings.Join(invalidMeida, ", ")).Error())
 				return
 			}
 		}
-		newBlog.Medias = blogMedias
+		mediaIDs = append(mediaIDs, *req.MediaIDs...)
 	}
 
-	// Gọi Collection để lưu vào DB
-	err := newBlog.Create()
+	db := database.GetDB()
+	session, err := db.Client().StartSession()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi khi bắt đầu session!",
+			Error:   err.Error(),
+		})
+		return
+	}
+	defer session.EndSession(c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err = mongo.WithSession(ctx, session, func(sessCtx mongo.SessionContext) error {
+		_, err := sessCtx.WithTransaction(sessCtx, func(sessCtx mongo.SessionContext) (interface{}, error) {
+			// 1. Update media nếu có
+			if len(mediaIDs) > 0 {
+				mediaFilter := bson.M{"_id": bson.M{"$in": mediaIDs}, "status": "PENDING"}
+				mediaUpdate := bson.M{"$set": bson.M{"status": "SUCCESS"}}
+				const maxRetry = 3
+				for i := 0; i < maxRetry; i++ {
+					if err := mediaEntry.UpdateMany(sessCtx, mediaFilter, mediaUpdate); err != nil {
+						if !mongo.IsTimeout(err) && !mongo.IsNetworkError(err) {
+							return nil, err
+						}
+						time.Sleep(time.Duration(100*(1<<i)) * time.Millisecond)
+					} else {
+						break
+					}
+				}
+				if req.MediaIDs != nil && len(*req.MediaIDs) > 0 {
+					newBlog.MediaIDs = *req.MediaIDs
+				}
+			}
+
+			// 2. Tạo blog mới
+			if err := newBlog.Create(sessCtx); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		})
+		return err
+	})
+
+	// Response cuối cùng dùng switch
 	switch {
 	case err == nil:
+		_ = newBlog.Preload(nil, "AccountFirst", "MediaFirst", "TagFirst")
 		c.JSON(http.StatusCreated, dto.ApiResponse{
 			Status:  http.StatusCreated,
 			Message: "Blog đã được tạo.",
-			Data:    newBlog,
+			Data:    newBlog.ParseEntry(),
 		})
 	default:
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
-			Message: "Lỗi do hệ thống!",
+			Message: "Lỗi hệ thống!",
 			Error:   err.Error(),
 		})
 	}
 }
 
-//func UpdateBlog(c *gin.Context) {
-//	var ()
-//
-//	// LẤY VÀ KIỂM TRA BLOG ID
-//	blodId := c.Param("id")
-//	blodObjectId, err := primitive.ObjectIDFromHex(blodId)
-//	if err != nil {
-//		c.JSON(http.StatusBadRequest, gin.H{
-//			"status":  http.StatusBadRequest,
-//			"message": "ID của blog không hợp lệ",
-//		})
-//		return
-//	}
-//
-//	// BIND VÀ VALIDATE REQUEST BODY
-//	var req dto.UpdateBlogRequest
-//	if err := c.ShouldBindJSON(&req); err != nil {
-//		c.JSON(http.StatusBadRequest, gin.H{
-//			"status":  http.StatusBadRequest,
-//			"message": err.Error(),
-//		})
-//		return
-//	}
-//
-//	// Giả sử bạn có hàm validate này
-//	if err := utils.ValidateUpdateBlogRequest(req); len(err) > 0 {
-//		c.JSON(http.StatusBadRequest, gin.H{
-//			"status":  http.StatusBadRequest,
-//			"message": err,
-//		})
-//		return
-//	}
-//
-//	// LẤY THÔNG TIN USER TỪ CONTEXT
-//	userIdInterface, exists := c.Get("account_id")
-//	if !exists {
-//		c.JSON(http.StatusUnauthorized, gin.H{
-//			"status":  http.StatusUnauthorized,
-//			"message": "Account chưa được xác thực (không tìm thấy account_id)",
-//		})
-//		return
-//	}
-//	userIdStr, ok := userIdInterface.(string)
-//	if !ok {
-//		c.JSON(http.StatusInternalServerError, gin.H{
-//			"status":  http.StatusInternalServerError,
-//			"message": "Lỗi định dạng dữ liệu account_id trong context",
-//		})
-//		return
-//	}
-//	updatedByID, err := primitive.ObjectIDFromHex(userIdStr)
-//	if err != nil {
-//		c.JSON(http.StatusUnauthorized, gin.H{
-//			"status":  http.StatusUnauthorized,
-//			"message": "Lỗi format id của user",
-//		})
-//		return
-//	}
-//	rolesInterface, exists := c.Get("roles")
-//	if !exists {
-//		c.JSON(http.StatusUnauthorized, gin.H{
-//			"status":  http.StatusUnauthorized,
-//			"message": "Account chưa được xác thực (không tìm thấy roles)",
-//		})
-//		return
-//	}
-//	roles, ok := rolesInterface.([]string)
-//	if !ok {
-//		c.JSON(http.StatusInternalServerError, gin.H{
-//			"status":  http.StatusInternalServerError,
-//			"message": "Lỗi định dạng dữ liệu roles trong context",
-//		})
-//		return
-//	}
-//
-//	// LẤY BLOG HIỆN TẠI VÀ KIỂM TRA QUYỀN
-//	existedBlog, checkExisted := blogCollection.FindById(db, ctx, blodObjectId)
-//	if checkExisted != nil {
-//		c.JSON(http.StatusBadRequest, gin.H{
-//			"status":  http.StatusBadRequest,
-//			"message": checkExisted.Error(),
-//		})
-//		return
-//	}
-//
-//	// Kiểm tra quyền
-//	if updatedByID != existedBlog.CreatedBy && !slices.Contains(roles, "Admin") {
-//		c.JSON(http.StatusForbidden, gin.H{
-//			"status":  http.StatusForbidden,
-//			"message": "Bạn không có quyền chỉnh sửa blog này",
-//		})
-//		return
-//	}
-//
-//	filter := bson.M{
-//		"_id": blodObjectId,
-//	}
-//
-//	updateDoc := bson.M{}
-//	var imagesToDelete []string
-//
-//	// Thêm các trường cơ bản
-//	if req.Title != nil {
-//		updateDoc["title"] = *req.Title
-//	}
-//	if req.Content != nil {
-//		updateDoc["content"] = *req.Content
-//	}
-//	if req.ThumbnailLink != nil {
-//		updateDoc["thumbnail_link"] = *req.ThumbnailLink
-//	}
-//	if req.TagIds != nil {
-//		updateDoc["tag_ids"] = *req.TagIds
-//	}
-//
-//	// Logic Diff cho Thumbnail
-//	if req.ThumbnailPublicId != nil {
-//		updateDoc["thumbnail_public_id"] = *req.ThumbnailPublicId
-//		if *req.ThumbnailPublicId != existedBlog.ThumbnailPublicId && existedBlog.ThumbnailPublicId != "" {
-//			imagesToDelete = append(imagesToDelete, existedBlog.ThumbnailPublicId)
-//		}
-//	}
-//
-//	// Logic Diff cho ảnh nội dung
-//	if req.PublicImgIds != nil {
-//		updateDoc["public_img_ids"] = *req.PublicImgIds
-//		newImageSet := make(map[string]bool)
-//		for _, newId := range *req.PublicImgIds {
-//			newImageSet[newId] = true
-//		}
-//		if existedBlog.PublicImgIds != nil {
-//			for _, oldId := range existedBlog.PublicImgIds {
-//				if _, found := newImageSet[oldId]; !found {
-//					imagesToDelete = append(imagesToDelete, oldId)
-//				}
-//			}
-//		}
-//	}
-//
-//	// Thêm các trường audit
-//	updateDoc["updated_at"] = time.Now()
-//	updateDoc["updated_by"] = updatedByID
-//
-//	update := bson.M{
-//		"$set": updateDoc,
-//	}
-//
-//	// CẬP NHẬT DATABASE
-//	_, err = blogCollection.Update(db, ctx, filter, update)
-//	if err != nil {
-//		if errors.Is(err, mongo.ErrNoDocuments) {
-//			c.JSON(http.StatusNotFound, gin.H{
-//				"status":  http.StatusNotFound,
-//				"message": "Không tìm thấy blog để update (có thể đã bị xóa)",
-//			})
-//			return
-//		}
-//		c.JSON(http.StatusInternalServerError, gin.H{
-//			"status":  http.StatusInternalServerError,
-//			"message": "Lỗi khi cập nhật blog: " + err.Error(),
-//		})
-//		return
-//	}
-//
-//	// DỌN DẸP ẢNH
-//	if len(imagesToDelete) > 0 {
-//		log.Printf("Bắt đầu xóa %d file cũ trên Cloudinary cho blog: %s", len(imagesToDelete), blodObjectId.Hex())
-//		for _, publicId := range imagesToDelete {
-//			err = utils.DeleteFileCloudinary(cld, publicId)
-//			if err != nil {
-//				log.Printf("LỖI dọn dẹp file: Không thể xóa file %s trên Cloudinary: %v", publicId, err)
-//			}
-//		}
-//	}
-//
-//	// TRẢ VỀ THÀNH CÔNG
-//	c.JSON(http.StatusOK, gin.H{
-//		"status":  http.StatusOK,
-//		"message": "Update blog thành công",
-//	})
-//}g
+func UpdateBlog(c *gin.Context) {
+	var (
+		err        error
+		blogEntry  = &collections.Blog{}
+		mediaEntry = &collections.Media{}
+		maxRetry   = 3
+	)
+
+	// LẤY VÀ KIỂM TRA BLOG ID
+	blogIDStr := c.Param("id")
+	blogID, err := primitive.ObjectIDFromHex(blogIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ApiResponse{
+			Status:  http.StatusBadRequest,
+			Message: "Blog ID không hợp lệ!",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// BIND VÀ VALIDATE REQUEST BODY
+	var req dto.UpdateBlogRequest
+	if err = c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	if validateErrs := utils.ValidateUpdateBlogRequest(req); len(validateErrs) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": validateErrs,
+		})
+		return
+	}
+
+	// LẤY THÔNG TIN USER TỪ CONTEXT
+	updatorID, ok := utils.GetAccountID(c)
+	if !ok {
+		return
+	}
+
+	//Lấy roles từ context
+	roles, err := utils.GetRoles(c)
+	if err != nil {
+		return
+	}
+
+	// Kiểm tra blog hiện tại có tồn tại không
+	var (
+		blogFilter = bson.M{
+			"_id": blogID,
+			"deleted_at": bson.M{
+				"$exists": false,
+			},
+		}
+	)
+	err = blogEntry.First(nil, blogFilter)
+	switch {
+	case err == nil:
+	case errors.Is(err, mongo.ErrNoDocuments):
+		c.JSON(http.StatusNotFound, dto.ApiResponse{
+			Status:  http.StatusNotFound,
+			Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
+			Error:   err.Error(),
+		})
+		return
+	default:
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi từ hệ thống!",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// Kiểm tra quyền xem thử account đó có phải chính chủ hay có quyền admin
+	if !utils.CanModifyResource(blogEntry.CreatedBy, updatorID, roles) {
+		utils.ResponseError(c, http.StatusForbidden, "Bạn không có quyền chỉnh sửa blog này!", nil)
+		return
+	}
+
+	//Tiến hành update blog
+	updateDoc := bson.M{}
+
+	// Thêm các trường cơ bản
+	if req.Title != nil {
+		updateDoc["title"] = *req.Title
+	}
+	if req.Content != nil {
+		updateDoc["content"] = *req.Content
+	}
+	if req.ContentHtml != nil {
+		updateDoc["content_html"] = *req.ContentHtml
+	}
+
+	if req.TagIds != nil {
+		updateDoc["tag_ids"] = *req.TagIds
+	}
+
+	// Logic Diff cho Thumbnail
+	mediaIdsToUpdate := []primitive.ObjectID{}
+	mediaIdsToDelete := []primitive.ObjectID{}
+	if req.ThumbnailID != nil {
+		newThumbnailID := *req.ThumbnailID
+		oldThumbnailID := blogEntry.ThumbnailID
+		if newThumbnailID.IsZero() {
+			if !oldThumbnailID.IsZero() {
+				mediaIdsToDelete = append(mediaIdsToDelete, oldThumbnailID)
+			}
+			updateDoc["thumbnail_url"] = ""
+			updateDoc["thumbnail_id"] = primitive.NilObjectID
+		} else if newThumbnailID != oldThumbnailID {
+			err = mediaEntry.First(nil, bson.M{
+				"_id": req.ThumbnailID,
+			})
+			switch {
+			case err == nil:
+			case errors.Is(err, mongo.ErrNoDocuments):
+				utils.ResponseError(c, http.StatusBadRequest, "", fmt.Errorf("Không tìm thấy thumbnail: %v", err.Error()))
+				return
+			default:
+				utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+				return
+			}
+			if mediaEntry.Type != consts.MEDIA_IMAGE {
+				utils.ResponseError(c, http.StatusBadRequest, "", "Thumbnail phải là ảnh")
+				return
+			}
+			updateDoc["thumbnail_url"] = mediaEntry.Url
+			updateDoc["thumbnail_id"] = *req.ThumbnailID
+			mediaIdsToUpdate = append(mediaIdsToUpdate, newThumbnailID)
+			if !oldThumbnailID.IsZero() {
+				mediaIdsToDelete = append(mediaIdsToDelete, oldThumbnailID)
+			}
+		}
+	}
+	// Logic Diff cho ảnh nội dung
+	if req.MediaIDs != nil {
+		oldMediaIDs := make(map[primitive.ObjectID]bool)
+		newMediaIDs := make(map[primitive.ObjectID]bool)
+		for _, m := range blogEntry.MediaIDs {
+			oldMediaIDs[m] = true
+		}
+		for _, m := range *req.MediaIDs {
+			newMediaIDs[m] = true
+			if !oldMediaIDs[m] {
+				mediaIdsToUpdate = append(mediaIdsToUpdate, m)
+			}
+		}
+		for oldID := range oldMediaIDs {
+			if !newMediaIDs[oldID] {
+				mediaIdsToDelete = append(mediaIdsToDelete, oldID)
+			}
+		}
+		updateDoc["media_ids"] = *req.MediaIDs
+	}
+
+	// Audit
+	updateDoc["updated_at"] = time.Now()
+	updateDoc["updated_by"] = updatorID
+	updateDoc["is_edit"] = true
+
+	db := database.GetDB()
+	session, err := db.Client().StartSession()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi khi bắt đầu session",
+			Error:   err.Error(),
+		})
+		return
+	}
+	defer session.EndSession(c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Transaction
+	err = mongo.WithSession(ctx, session, func(sessCtx mongo.SessionContext) error {
+		_, err := sessCtx.WithTransaction(sessCtx, func(sessCtx mongo.SessionContext) (interface{}, error) {
+			// Update media mới
+			if len(mediaIdsToUpdate) > 0 {
+				mediaFilter := bson.M{"_id": bson.M{"$in": mediaIdsToUpdate}, "status": "PENDING"}
+				mediaUpdate := bson.M{"$set": bson.M{"status": "SUCCESS"}}
+				for i := 0; i < maxRetry; i++ {
+					if err := mediaEntry.UpdateMany(sessCtx, mediaFilter, mediaUpdate); err != nil {
+						if !mongo.IsTimeout(err) && !mongo.IsNetworkError(err) {
+							return nil, err
+						}
+						time.Sleep(time.Duration(100*(1<<i)) * time.Millisecond)
+					} else {
+						break
+					}
+				}
+			}
+
+			// Vô hiệu hóa media cũ
+			if len(mediaIdsToDelete) > 0 {
+				mediaFilter := bson.M{"_id": bson.M{"$in": mediaIdsToDelete}}
+				mediaUpdate := bson.M{"$set": bson.M{"status": "DELETED"}}
+				for i := 0; i < maxRetry; i++ {
+					if err := mediaEntry.UpdateMany(sessCtx, mediaFilter, mediaUpdate); err != nil {
+						if !mongo.IsTimeout(err) && !mongo.IsNetworkError(err) {
+							return nil, err
+						}
+						time.Sleep(time.Duration(100*(1<<i)) * time.Millisecond)
+					} else {
+						break
+					}
+				}
+			}
+
+			// Update blog chính
+			if err := blogEntry.Update(sessCtx, blogFilter, bson.M{"$set": updateDoc}); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		})
+		return err
+	})
+
+	switch {
+	case err == nil:
+		c.JSON(http.StatusOK, dto.ApiResponse{
+			Status:  http.StatusOK,
+			Message: "Cập nhật blog thành công",
+		})
+	case errors.Is(err, mongo.ErrNoDocuments):
+		c.JSON(http.StatusNotFound, dto.ApiResponse{
+			Status:  http.StatusNotFound,
+			Message: "Không tìm thấy blog để update",
+			Error:   err.Error(),
+		})
+	default:
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi hệ thống!",
+			Error:   err.Error(),
+		})
+	}
+}
 
 func SoftDeleteBlog(c *gin.Context) {
-	// 1. Lấy BlogID từ URL param
+	// Lấy BlogID từ URL param
 	var (
 		err          error
 		blogEntry    = &collections.Blog{}
 		commentEntry = &collections.Comment{}
-		mediaEntry   = &collections.Media{}
 	)
+
 	blogIDStr := c.Param("id")
 	blogID, err := primitive.ObjectIDFromHex(blogIDStr)
 	if err != nil {
@@ -396,35 +461,27 @@ func SoftDeleteBlog(c *gin.Context) {
 	if !ok {
 		return
 	}
+
 	// Lấy role từ người delete
-	roles, existed := c.Get("roles")
-	if !existed {
-		c.JSON(http.StatusUnauthorized, dto.ApiResponse{
-			Status:  http.StatusUnauthorized,
-			Message: "Không tìm thấy roles trong context!",
-		})
+	roles, err := utils.GetRoles(c)
+	if err != nil {
 		return
 	}
-	rolesSlice := roles.([]string)
-	//Kiểm tra xem blog đó có tồn tại không
-	var (
-		blogFilter = bson.M{
-			"_id": blogID,
-			"deleted_at": bson.M{
-				"$exists": false,
-			},
-		}
-	)
-	err = blogEntry.First(blogFilter)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			c.JSON(http.StatusNotFound, dto.ApiResponse{
-				Status:  http.StatusNotFound,
-				Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
-				Error:   err.Error(),
-			})
-			return
-		}
+
+	// Kiểm tra xem blog đó có tồn tại không
+	blogFilter := bson.M{"_id": blogID, "deleted_at": bson.M{"$exists": false}}
+	err = blogEntry.First(nil, blogFilter)
+	switch {
+	case err == nil:
+		// Blog tồn tại, không làm gì cả
+	case errors.Is(err, mongo.ErrNoDocuments):
+		c.JSON(http.StatusNotFound, dto.ApiResponse{
+			Status:  http.StatusNotFound,
+			Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
+			Error:   err.Error(),
+		})
+		return
+	default:
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
 			Message: "Lỗi từ hệ thống!",
@@ -432,110 +489,98 @@ func SoftDeleteBlog(c *gin.Context) {
 		})
 		return
 	}
-	//Kiểm tra deleter có phải là chủ blog hay là admin
-	if blogEntry.CreatedBy != deletorID && !slices.Contains(rolesSlice, "Admin") {
-		c.JSON(http.StatusForbidden, dto.ApiResponse{
-			Status:  http.StatusForbidden,
-			Message: "Bạn không có quyền truy cập vào tài nguyên này!",
+
+	// Kiểm tra quyền xóa
+	if !utils.CanModifyResource(blogEntry.CreatedBy, deletorID, roles) {
+		utils.ResponseError(c, http.StatusForbidden, "Bạn không có quyền chỉnh sửa blog này!", nil)
+		return
+	}
+
+	// Lấy danh sách comment chưa xóa của blog
+	commentFilter := bson.M{"blog_id": blogID, "deleted_at": bson.M{"$exists": false}}
+	comments, err := commentEntry.Find(commentFilter, options.Find().SetProjection(bson.M{"_id": 1}))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi khi lấy comment",
+			Error:   err.Error(),
 		})
 		return
 	}
-	//Lấy danh sách các comment cần soft delete
-	var (
-		commentFilter = bson.M{
-			"blog_id": blogID,
-			"deleted_at": bson.M{
-				"$exists": false,
-			},
-		}
-	)
-	comments, err := commentEntry.Find(commentFilter, options.Find().SetProjection(bson.M{"_id": 1}))
-	commentIDs := make([]primitive.ObjectID, 0)
+	commentIDs := make([]primitive.ObjectID, 0, len(comments))
 	for _, comment := range comments {
 		commentIDs = append(commentIDs, comment.ID)
 	}
 
-	//Soft delete các comment của blog
-	if len(commentIDs) > 0 {
-		updateCommentFilter := bson.M{
-			"_id": bson.M{
-				"$in": commentIDs,
-			},
-			"deleted_at": bson.M{
-				"$exists": false,
-			},
-		}
-		updateComment := bson.M{
-			"$set": bson.M{
-				"deleted_at": time.Now(),
-				"deleted_by": deletorID,
-				"updated_by": deletorID,
-				"updated_at": time.Now(),
-			},
-		}
-		_, err = commentEntry.UpdateMany(updateCommentFilter, updateComment)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-				Status:  http.StatusInternalServerError,
-				Message: "Lỗi do hệ thống!",
-				Error:   err.Error(),
-			})
-			return
-		}
-	}
-
-	//Soft delete các media của blog và các media của comment
-	documentIDs := append(commentIDs, blogID)
-	if len(documentIDs) > 0 {
-		updateMediaFilter := bson.M{
-			"document_id": bson.M{
-				"$in": documentIDs,
-			},
-			"deleted_at": bson.M{
-				"$exists": false,
-			},
-		}
-		updateMedias := bson.M{
-			"$set": bson.M{
-				"deleted_at": time.Now(),
-				"status":     "inactive",
-			},
-		}
-		err = mediaEntry.UpdateMany(updateMediaFilter, updateMedias)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-				Status:  http.StatusInternalServerError,
-				Message: "Lỗi do hệ thống!",
-				Error:   err.Error(),
-			})
-			return
-		}
-	}
-
-	//Soft delete blog
-	var (
-		blogUpdate = bson.M{
-			"$set": bson.M{
-				"deleted_at": time.Now(),
-				"deleted_by": deletorID,
-				"updated_by": deletorID,
-				"updated_at": time.Now(),
-			},
-		}
-	)
-	err = blogEntry.Update(blogFilter, blogUpdate)
+	// Bắt đầu transaction MongoDB
+	db := database.GetDB()
+	session, err := db.Client().StartSession()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
-			Message: "Lỗi từ hệ thống!",
+			Message: "Lỗi khi khởi tạo session",
 			Error:   err.Error(),
 		})
 		return
 	}
-	c.JSON(http.StatusNoContent, dto.ApiResponse{
-		Status:  http.StatusNoContent,
-		Message: "Xóa mềm thành công.",
+	defer session.EndSession(c)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	err = mongo.WithSession(ctx, session, func(sessCtx mongo.SessionContext) error {
+		_, err := sessCtx.WithTransaction(sessCtx, func(sessCtx mongo.SessionContext) (interface{}, error) {
+			now := time.Now()
+
+			// Soft delete comment
+			if len(commentIDs) > 0 {
+				updateCommentFilter := bson.M{"_id": bson.M{"$in": commentIDs}, "deleted_at": bson.M{"$exists": false}}
+				updateComment := bson.M{"$set": bson.M{
+					"deleted_at": now,
+					"deleted_by": deletorID,
+					"updated_at": now,
+					"updated_by": deletorID,
+				}}
+				if _, err := commentEntry.UpdateMany(sessCtx, updateCommentFilter, updateComment); err != nil {
+					return nil, err
+				}
+			}
+
+			// Soft delete blog
+			blogUpdate := bson.M{"$set": bson.M{
+				"deleted_at": now,
+				"deleted_by": deletorID,
+				"updated_at": now,
+				"updated_by": deletorID,
+			}}
+			if err := blogEntry.Update(sessCtx, blogFilter, blogUpdate); err != nil {
+				return nil, err
+			}
+
+			return nil, nil
+		})
+		return err
 	})
+
+	switch {
+	case err == nil:
+		c.JSON(http.StatusOK, dto.ApiResponse{
+			Status:  http.StatusOK,
+			Message: "Xóa mềm blog và comment thành công.",
+		})
+	case errors.Is(err, mongo.ErrNoDocuments):
+		c.JSON(http.StatusNotFound, dto.ApiResponse{
+			Status:  http.StatusNotFound,
+			Message: "Không tìm thấy blog để xóa (có thể đã bị xóa)!",
+			Error:   err.Error(),
+		})
+	default:
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi hệ thống!",
+			Error:   err.Error(),
+		})
+	}
 }
 
 func RestoreBlog(c *gin.Context) {
@@ -544,7 +589,6 @@ func RestoreBlog(c *gin.Context) {
 		err          error
 		blogEntry    = &collections.Blog{}
 		commentEntry = &collections.Comment{}
-		mediaEntry   = &collections.Media{}
 	)
 	blogIDStr := c.Param("id")
 	blogID, err := primitive.ObjectIDFromHex(blogIDStr)
@@ -563,15 +607,10 @@ func RestoreBlog(c *gin.Context) {
 		return
 	}
 	// Lấy role
-	roles, existed := c.Get("roles")
-	if !existed {
-		c.JSON(http.StatusUnauthorized, dto.ApiResponse{
-			Status:  http.StatusUnauthorized,
-			Message: "Không tìm thấy roles trong context!",
-		})
+	roles, err := utils.GetRoles(c)
+	if err != nil {
 		return
 	}
-	rolesSlice := roles.([]string)
 
 	//Kiểm tra xem blog đó có tồn tại VÀ ĐÃ BỊ XÓA không
 	var (
@@ -582,16 +621,19 @@ func RestoreBlog(c *gin.Context) {
 			},
 		}
 	)
-	err = blogEntry.First(blogFilter)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			c.JSON(http.StatusNotFound, dto.ApiResponse{
-				Status:  http.StatusNotFound,
-				Message: "Không tìm thấy blog hoặc blog này chưa bị xóa!",
-				Error:   err.Error(),
-			})
-			return
-		}
+
+	err = blogEntry.First(nil, blogFilter)
+	switch {
+	case err == nil:
+		// Blog tồn tại, không làm gì cả
+	case errors.Is(err, mongo.ErrNoDocuments):
+		c.JSON(http.StatusNotFound, dto.ApiResponse{
+			Status:  http.StatusNotFound,
+			Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
+			Error:   err.Error(),
+		})
+		return
+	default:
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
 			Message: "Lỗi từ hệ thống!",
@@ -601,35 +643,28 @@ func RestoreBlog(c *gin.Context) {
 	}
 
 	//Kiểm tra quyền
-	if blogEntry.CreatedBy != restorerID && !slices.Contains(rolesSlice, "Admin") {
-		c.JSON(http.StatusForbidden, dto.ApiResponse{
-			Status:  http.StatusForbidden,
-			Message: "Bạn không có quyền truy cập vào tài nguyên này!",
-		})
+	if !utils.CanModifyResource(blogEntry.CreatedBy, restorerID, roles) {
+		utils.ResponseError(c, http.StatusForbidden, "Bạn không có quyền chỉnh sửa blog này!", nil)
 		return
 	}
 
 	//Lấy danh sách các comment cần khôi phục
-	var (
-		commentFilter = bson.M{
-			"blog_id": blogID,
-			"deleted_at": bson.M{
-				"$exists": true,
-			},
-		}
-	)
-	comments, err := commentEntry.Find(commentFilter, options.Find().SetProjection(bson.M{"_id": 1}))
-	commentIDs := make([]primitive.ObjectID, 0)
-	for _, comment := range comments {
-		commentIDs = append(commentIDs, comment.ID)
-	}
+	db := database.GetDB()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	// KHÔI PHỤC CÁC COMMENT CỦA BLOG
-	if len(commentIDs) > 0 {
-		updateCommentFilter := bson.M{
-			"_id": bson.M{
-				"$in": commentIDs,
-			},
+	session, err := db.Client().StartSession()
+	if err != nil {
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+		return
+	}
+	defer session.EndSession(ctx)
+
+	// Transaction logic
+	callback := func(sessCtx mongo.SessionContext) (interface{}, error) {
+		// Khôi phục các comment bị xóa
+		commentFilter := bson.M{
+			"blog_id": blogID,
 			"deleted_at": bson.M{
 				"$exists": true,
 			},
@@ -644,50 +679,13 @@ func RestoreBlog(c *gin.Context) {
 				"updated_at": time.Now(),
 			},
 		}
-		_, err = commentEntry.UpdateMany(updateCommentFilter, updateComment)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-				Status:  http.StatusInternalServerError,
-				Message: "Lỗi do hệ thống khi khôi phục comments!",
-				Error:   err.Error(),
-			})
-			return
-		}
-	}
 
-	// KHÔI PHỤC CÁC MEDIA
-	documentIDs := append(commentIDs, blogID)
-	if len(documentIDs) > 0 {
-		updateMediaFilter := bson.M{
-			"document_id": bson.M{
-				"$in": documentIDs,
-			},
-			"deleted_at": bson.M{
-				"$exists": true,
-			},
+		if _, err := commentEntry.UpdateMany(sessCtx, commentFilter, updateComment); err != nil {
+			return nil, fmt.Errorf("Lỗi khi khôi phục comment: %v", err)
 		}
-		updateMedias := bson.M{
-			"$unset": bson.M{
-				"deleted_at": "",
-			},
-			"$set": bson.M{
-				"status": "active",
-			},
-		}
-		err = mediaEntry.UpdateMany(updateMediaFilter, updateMedias)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-				Status:  http.StatusInternalServerError,
-				Message: "Lỗi do hệ thống khi khôi phục media!",
-				Error:   err.Error(),
-			})
-			return
-		}
-	}
 
-	// Khôi phục blog
-	var (
-		blogUpdate = bson.M{
+		// Khôi phục blog
+		blogUpdate := bson.M{
 			"$unset": bson.M{
 				"deleted_at": "",
 				"deleted_by": "",
@@ -697,22 +695,21 @@ func RestoreBlog(c *gin.Context) {
 				"updated_at": time.Now(),
 			},
 		}
-	)
 
-	err = blogEntry.Update(blogFilter, blogUpdate)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-			Status:  http.StatusInternalServerError,
-			Message: "Lỗi từ hệ thống khi khôi phục blog!",
-			Error:   err.Error(),
-		})
-		return
+		if err := blogEntry.Update(sessCtx, blogFilter, blogUpdate); err != nil {
+			return nil, fmt.Errorf("Lỗi khi khôi phục blog: %v", err)
+		}
+
+		return nil, nil
 	}
 
-	c.JSON(http.StatusOK, dto.ApiResponse{
-		Status:  http.StatusOK,
-		Message: "Khôi phục thành công.",
-	})
+	// Chạy transaction
+	_, err = session.WithTransaction(ctx, callback)
+	if err != nil {
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", fmt.Sprintf("Lỗi transaction: %v", err))
+		return
+	}
+	utils.ResponseSuccess(c, http.StatusOK, "Khôi phục blog thành công!", nil, nil)
 }
 
 func GetListBlogs(c *gin.Context) {
@@ -758,14 +755,14 @@ func GetListBlogs(c *gin.Context) {
 	findOptions.SetSort(sorts)
 
 	//Tính toán trang
-	totalDocs, _ := blogEntry.CountDocuments(filter)
+	totalDocs, _ := blogEntry.CountDocuments(nil, filter)
 	totalPages := int64(math.Ceil(float64(totalDocs) / float64(limit)))
 
 	//Lấy kết quả tìm kiếm
-	results, err := blogEntry.Find(filter, findOptions)
+	results, err := blogEntry.Find(nil, filter, findOptions)
 	switch {
 	case err == nil:
-		err = blogEntry.Preload(&results, "AccountFind", "TagFind", "CommentCountFind")
+		err = blogEntry.Preload(&results, "AccountFind", "TagFind", "CommentCountFind", "MediaFind")
 		if err != nil {
 			if err != mongo.ErrNoDocuments {
 				c.JSON(http.StatusInternalServerError, dto.ApiResponse{
@@ -785,10 +782,10 @@ func GetListBlogs(c *gin.Context) {
 			Message: "Thành công.",
 			Data:    res,
 			Pagination: &dto.Pagination{
-				PageNo:     int(page),
-				PageSize:   int(limit),
-				PageCount:  int(totalPages),
-				TotalItems: int(totalDocs),
+				Page:      int(page),
+				Length:    int(limit),
+				Total:     int(totalPages),
+				TotalDocs: int(totalDocs),
 			},
 		})
 	case len(results) == 0:
@@ -811,16 +808,30 @@ func GetBlog(c *gin.Context) {
 		idHex, _ = primitive.ObjectIDFromHex(id)
 		entry    collections.Blog
 		filter   = bson.M{
-			"_id":        idHex,
-			"deleted_at": nil,
+			"_id": idHex,
+			"deleted_at": bson.M{
+				"$exists": false,
+			},
 		}
 		err error
 	)
 
-	err = entry.First(filter)
+	viewerID, exists := c.Get("account_id")
+	viewerIDStr := c.ClientIP()
+	if exists {
+		viewerIDStr = viewerID.(string)
+	}
+
+	err = entry.First(nil, filter)
 	switch err {
 	case nil:
-		err = entry.Preload(nil, "AccountFirst", "TagFirst", "CommentCountFirst")
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			wg.Done()
+			entry.IncrementBlogView(viewerIDStr)
+		}()
+		err = entry.Preload(nil, "AccountFirst", "TagFirst", "CommentCountFirst", "CommentFirst", "MediaFirst")
 		if err != nil {
 			if err != mongo.ErrNoDocuments {
 				c.JSON(http.StatusInternalServerError, dto.ApiResponse{
@@ -831,6 +842,7 @@ func GetBlog(c *gin.Context) {
 				return
 			}
 		}
+		wg.Wait()
 		c.JSON(http.StatusOK, dto.ApiResponse{
 			Status:  http.StatusOK,
 			Message: "Lấy dữ liệu thành công!",
@@ -862,7 +874,7 @@ func GetCommentFromBlog(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, dto.ApiResponse{
 			Status:  http.StatusBadRequest,
-			Message: "Parent Comment ID không hợp lệ!",
+			Message: "Blog ID không hợp lệ!",
 		})
 		return
 	}
@@ -913,8 +925,13 @@ func GetCommentFromBlog(c *gin.Context) {
 		return
 	}
 
+	if len(comments) == 0 {
+		utils.ResponseError(c, http.StatusNotFound, "Không tìm thấy comment của bài viết!", nil)
+		return
+	}
+
 	//Xử lý preload
-	err = commentEntry.Preload(comments, "AccountFind")
+	err = commentEntry.Preload(comments, "AccountFind", "MediaFind")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
@@ -937,6 +954,7 @@ func GetCommentFromBlog(c *gin.Context) {
 	}
 
 	var nextLastID primitive.ObjectID
+
 	if len(commentsRes) > 0 {
 		nextLastID = comments[len(commentsRes)-1].ID
 	}
@@ -946,10 +964,182 @@ func GetCommentFromBlog(c *gin.Context) {
 		Status:  http.StatusOK,
 		Message: "Lấy replies thành công.",
 		Data:    commentsRes,
-		PaginationLoadMore: &dto.PaginationLoadMore{
-			HasMore:     hasMore,
-			NextLastId:  nextLastID,
-			TotalLoaded: len(commentsRes),
+		Pagination: &dto.Pagination{
+			HasMore: hasMore,
+			LastId:  nextLastID.Hex(),
 		},
 	})
+}
+
+func LockComment(c *gin.Context) {
+	var (
+		err       error
+		blogEntry = &collections.Blog{}
+	)
+
+	// LẤY VÀ KIỂM TRA BLOG ID
+	blogIDStr := c.Param("id")
+	blogID, err := primitive.ObjectIDFromHex(blogIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ApiResponse{
+			Status:  http.StatusBadRequest,
+			Message: "Blog ID không hợp lệ!",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// LẤY THÔNG TIN USER TỪ CONTEXT
+	updatorID, ok := utils.GetAccountID(c)
+	if !ok {
+		return
+	}
+
+	//Lấy roles từ context
+	roles, err := utils.GetRoles(c)
+	if err != nil {
+		return
+	}
+
+	// Kiểm tra blog hiện tại có tồn tại không
+	var (
+		blogFilter = bson.M{
+			"_id": blogID,
+			"deleted_at": bson.M{
+				"$exists": false,
+			},
+		}
+	)
+
+	err = blogEntry.First(nil, blogFilter)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			c.JSON(http.StatusNotFound, dto.ApiResponse{
+				Status:  http.StatusNotFound,
+				Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
+				Error:   err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi từ hệ thống!",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// Kiểm tra quyền xem thử account đó có phải chính chủ hay có quyền admin
+	if !utils.CanModifyResource(blogEntry.CreatedBy, updatorID, roles) {
+		utils.ResponseError(c, http.StatusForbidden, "Bạn không có quyền chỉnh sửa blog này!", nil)
+		return
+	}
+
+	if blogEntry.IsLockComment {
+		utils.ResponseError(c, http.StatusBadRequest, "", "Bài viết này hiện tại đã khóa bình luận!")
+		return
+	}
+
+	err = blogEntry.Update(nil, blogFilter, bson.M{
+		"$set": bson.M{
+			"is_lock_comment": true,
+			"updated_at":      time.Now(),
+			"updated_by":      updatorID,
+		},
+	})
+
+	if err != nil {
+		if err != mongo.ErrNoDocuments {
+			utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+			return
+		}
+	}
+	utils.ResponseSuccess(c, http.StatusOK, "Khóa bình luận thành công.", nil, nil)
+}
+
+func UnLockComment(c *gin.Context) {
+	var (
+		err       error
+		blogEntry = &collections.Blog{}
+	)
+
+	// LẤY VÀ KIỂM TRA BLOG ID
+	blogIDStr := c.Param("id")
+	blogID, err := primitive.ObjectIDFromHex(blogIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ApiResponse{
+			Status:  http.StatusBadRequest,
+			Message: "Blog ID không hợp lệ!",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// LẤY THÔNG TIN USER TỪ CONTEXT
+	updatorID, ok := utils.GetAccountID(c)
+	if !ok {
+		return
+	}
+
+	//Lấy roles từ context
+	roles, err := utils.GetRoles(c)
+	if err != nil {
+		return
+	}
+
+	// Kiểm tra blog hiện tại có tồn tại không
+	var (
+		blogFilter = bson.M{
+			"_id": blogID,
+			"deleted_at": bson.M{
+				"$exists": false,
+			},
+		}
+	)
+
+	err = blogEntry.First(nil, blogFilter)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			c.JSON(http.StatusNotFound, dto.ApiResponse{
+				Status:  http.StatusNotFound,
+				Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
+				Error:   err.Error(),
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi từ hệ thống!",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	// Kiểm tra quyền xem thử account đó có phải chính chủ hay có quyền admin
+	if !utils.CanModifyResource(blogEntry.CreatedBy, updatorID, roles) {
+		utils.ResponseError(c, http.StatusForbidden, "Bạn không có quyền chỉnh sửa blog này!", nil)
+		return
+	}
+
+	if !blogEntry.IsLockComment {
+		utils.ResponseError(c, http.StatusBadRequest, "", "Bài viết này hiện tại vẫn chưa khóa bình luận!")
+		return
+	}
+
+	err = blogEntry.Update(nil, blogFilter, bson.M{
+		"$set": bson.M{
+			"is_lock_comment": false,
+			"updated_at":      time.Now(),
+			"updated_by":      updatorID,
+		},
+	})
+
+	if err != nil {
+		if err != mongo.ErrNoDocuments {
+			utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+			return
+		}
+	}
+
+	utils.ResponseSuccess(c, http.StatusOK, "Mở bình luận thành công.", nil, nil)
 }

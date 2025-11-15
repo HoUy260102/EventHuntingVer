@@ -3,6 +3,7 @@ package utils
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -14,8 +15,13 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
+var listAllowedRole = []string{
+	"Admin",
+}
+
 var (
 	nonAlphanumericRegex = regexp.MustCompile(`[^a-z0-9-]`)
+	multipleHyphenRegex  = regexp.MustCompile(`-+`)
 )
 
 // GenerateSlug Tạo ra slug từ chuỗi string. Ví dụ: Công nghệ
@@ -28,6 +34,9 @@ var (
 //   - quotient: kết quả sau khi chuyển. Ví dụ: cong-nghe
 func GenerateSlug(input string) string {
 	//Loại bỏ dấu
+	input = strings.ReplaceAll(input, "Đ", "D")
+	input = strings.ReplaceAll(input, "đ", "d")
+
 	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
 
 	// Áp dụng transformer
@@ -35,14 +44,17 @@ func GenerateSlug(input string) string {
 
 	lowercased := strings.ToLower(normalized)
 
-	//Thay thế khoảng trắng bằng gạch ngang
+	// Thay khoảng trắng bằng gạch ngang
 	withHyphens := strings.ReplaceAll(lowercased, " ", "-")
 
-	//Loại bỏ tất cả các ký tự không phải chữ, số, hoặc gạch ngang
-	finalSlug := nonAlphanumericRegex.ReplaceAllString(withHyphens, "")
+	// Thay tất cả ký tự không phải chữ, số, hoặc "-" bằng "-"
+	replaced := nonAlphanumericRegex.ReplaceAllString(withHyphens, "-")
 
-	//Xóa gạch ngang ở đầu hoặc cuối chuỗi
-	finalSlug = strings.Trim(finalSlug, "-")
+	// Xóa các dấu "-" liên tiếp
+	cleaned := multipleHyphenRegex.ReplaceAllString(replaced, "-")
+
+	// Xóa "-" ở đầu hoặc cuối chuỗi
+	finalSlug := strings.Trim(cleaned, "-")
 
 	return finalSlug
 }
@@ -70,4 +82,13 @@ func ExtractUniqueIDs[T any](list []T, extract func(T) []primitive.ObjectID) []p
 		unique = append(unique, id)
 	}
 	return unique
+}
+
+func CanModifyResource(ownerID primitive.ObjectID, accountID primitive.ObjectID, roles []string) bool {
+	for _, role := range roles {
+		if slices.Contains(listAllowedRole, role) {
+			return true
+		}
+	}
+	return ownerID == accountID
 }

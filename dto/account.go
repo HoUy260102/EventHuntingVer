@@ -14,11 +14,11 @@ var (
 )
 
 type UpdateAccountReq struct {
-	Name           *string       `json:"name"`
-	Phone          *string       `json:"phone"`
-	Address        *string       `json:"address"`
-	UserInfor      *UserDTO      `json:"user_infor"`
-	OrganizerInfor *OrganizerDTO `json:"organizer_infor"`
+	Name          *string       `json:"name"`
+	Phone         *string       `json:"phone"`
+	Address       *string       `json:"address"`
+	UserInfo      *UserDTO      `json:"user_info"`
+	OrganizerInfo *OrganizerDTO `json:"organizer_info"`
 }
 
 // Validate cho updateAccountRequest
@@ -46,35 +46,35 @@ func ValidateUpdateAccountReq(data UpdateAccountReq) []string {
 		}
 	}
 
-	// Validate UserInfor
-	if data.UserInfor != nil {
-		// Chỉ validate các trường con không-nil bên trong UserInfor
+	// Validate UserInfo
+	if data.UserInfo != nil {
+		// Chỉ validate các trường con không-nil bên trong UserInfo
 
-		if data.UserInfor.Dob != nil {
-			if data.UserInfor.Dob.IsZero() {
+		if data.UserInfo.Dob != nil {
+			if data.UserInfo.Dob.IsZero() {
 				validationErrors = append(validationErrors, "ngày sinh (dob) không được để trống")
-			} else if data.UserInfor.Dob.After(time.Now()) {
+			} else if data.UserInfo.Dob.After(time.Now()) {
 				validationErrors = append(validationErrors, "ngày sinh (dob) không được ở tương lai")
 			}
 		}
 
 	}
 
-	// Validate OrganizerInfor
-	if data.OrganizerInfor != nil {
-		// Chỉ validate các trường con không-nil bên trong OrganizerInfor
+	// Validate OrganizerInfo
+	if data.OrganizerInfo != nil {
+		// Chỉ validate các trường con không-nil bên trong OrganizerInfo
 
-		if data.OrganizerInfor.ContactName != nil {
-			if strings.TrimSpace(*data.OrganizerInfor.ContactName) == "" {
+		if data.OrganizerInfo.ContactName != nil {
+			if strings.TrimSpace(*data.OrganizerInfo.ContactName) == "" {
 				validationErrors = append(validationErrors, "tên liên hệ (contact_name) của nhà tổ chức không được để trống")
 			}
 		}
 
-		if data.OrganizerInfor.WebsiteUrl != nil {
+		if data.OrganizerInfo.WebsiteUrl != nil {
 			// Cho phép gửi lên string rỗng "" (để xóa url)
 			// Nhưng nếu gửi lên string có nội dung, thì phải hợp lệ
-			if *data.OrganizerInfor.WebsiteUrl != "" {
-				_, err := url.ParseRequestURI(*data.OrganizerInfor.WebsiteUrl)
+			if *data.OrganizerInfo.WebsiteUrl != "" {
+				_, err := url.ParseRequestURI(*data.OrganizerInfo.WebsiteUrl)
 				if err != nil {
 					validationErrors = append(validationErrors, "đường dẫn website (website_url) không hợp lệ")
 				}
@@ -93,9 +93,9 @@ type CreateAccount struct {
 	RoleId   primitive.ObjectID `json:"role_id"`
 	Phone    string             `json:"phone"`
 
-	Address        *string       `json:"address"`
-	UserInfor      *UserDTO      `json:"user_infor"`
-	OrganizerInfor *OrganizerDTO `json:"organizer_infor"`
+	Address       *string       `json:"address"`
+	UserInfo      *UserDTO      `json:"user_info"`
+	OrganizerInfo *OrganizerDTO `json:"organizer_info"`
 }
 
 type OrganizerDTO struct {
@@ -147,26 +147,26 @@ func ValidateCreateAccountRequest(data CreateAccount) []string {
 		}
 	}
 
-	// Validate UserInfor
-	if data.UserInfor != nil {
-		if data.UserInfor.Dob != nil {
-			if data.UserInfor.Dob.IsZero() {
+	// Validate UserInfo
+	if data.UserInfo != nil {
+		if data.UserInfo.Dob != nil {
+			if data.UserInfo.Dob.IsZero() {
 				validationErrors = append(validationErrors, "ngày sinh (dob) không được để trống")
 			}
-			if data.UserInfor.Dob.After(time.Now()) {
+			if data.UserInfo.Dob.After(time.Now()) {
 				validationErrors = append(validationErrors, "ngày sinh (dob) không được ở tương lai")
 			}
 		}
 	}
 
-	// Validate OrganizerInfor
-	if data.OrganizerInfor != nil {
-		if data.OrganizerInfor.ContactName != nil && strings.TrimSpace(*data.OrganizerInfor.ContactName) == "" {
-			validationErrors = append(validationErrors, "tên liên hệ (contact_name) là bắt buộc (khi cung cấp OrganizerInfor)")
+	// Validate OrganizerInfo
+	if data.OrganizerInfo != nil {
+		if data.OrganizerInfo.ContactName != nil && strings.TrimSpace(*data.OrganizerInfo.ContactName) == "" {
+			validationErrors = append(validationErrors, "tên liên hệ (contact_name) là bắt buộc (khi cung cấp OrganizerInfo)")
 		}
 
-		if data.OrganizerInfor.WebsiteUrl != nil && *data.OrganizerInfor.WebsiteUrl != "" {
-			_, err := url.ParseRequestURI(*data.OrganizerInfor.WebsiteUrl)
+		if data.OrganizerInfo.WebsiteUrl != nil && *data.OrganizerInfo.WebsiteUrl != "" {
+			_, err := url.ParseRequestURI(*data.OrganizerInfo.WebsiteUrl)
 			if err != nil {
 				validationErrors = append(validationErrors, "đường dẫn website (website_url) không hợp lệ")
 			}
@@ -187,8 +187,8 @@ type CreateUserRequest struct {
 	Name     string `json:"name"`
 	Password string `json:"password"`
 
-	Phone     *string  `json:"phone"`
-	UserInfor *UserDTO `json:"user_infor"`
+	Phone    *string  `json:"phone"`
+	UserInfo *UserDTO `json:"user_info"`
 }
 
 type CreateOrganizerRequest struct {
@@ -196,6 +196,6 @@ type CreateOrganizerRequest struct {
 	Name     string `json:"name"`
 	Password string `json:"password"`
 
-	Phone          string        `json:"phone"`
-	OrganizerInfor *OrganizerDTO `json:"organizer_infor,omitempty"`
+	Phone         string        `json:"phone"`
+	OrganizerInfo *OrganizerDTO `json:"organizer_info,omitempty"`
 }

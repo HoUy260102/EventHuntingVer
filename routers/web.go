@@ -5,16 +5,17 @@ import (
 	"EventHunting/middlewares"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 )
 
-func Register(router *gin.RouterGroup, redisClient *redis.Client) {
+func Register(router *gin.RouterGroup) {
 	//Auth
 	authRouter := router.Group("auth")
 	{
-		authRouter.POST("/login", func(c *gin.Context) {
-			controllers.Login(c, redisClient)
-		})
+		authRouter.POST("/login", controllers.Login)
+		authRouter.POST("/logout", controllers.Logout)
+		authRouter.POST("renew-access-token", controllers.RenewAccessToken)
+		authRouter.GET("/:provider", controllers.BeginGoogleAuth)
+		authRouter.GET("/:provider/callback", controllers.OAuthCallback)
 	}
 
 	//Account
@@ -60,21 +61,52 @@ func Register(router *gin.RouterGroup, redisClient *redis.Client) {
 	//Tag
 	tagRouter := router.Group("tags")
 	{
-		tagRouter.POST("/add", middlewares.RBACMiddleware("add_tag"), controllers.CreateTag)
-		tagRouter.PATCH("/:id/update", middlewares.RBACMiddleware("update_tag"), controllers.UpdateTag)
-		tagRouter.PATCH("/:id/soft-delete", middlewares.RBACMiddleware("soft-delete_tag"), controllers.SoftDeleteTag)
-		tagRouter.PATCH("/:id/restore", middlewares.RBACMiddleware("restore_tag"), controllers.RestoreTag)
+		tagRouter.POST("/add", middlewares.AuthorizeJWTMiddleware(), middlewares.RBACMiddleware("add_tag"), controllers.CreateTag)
+		tagRouter.PATCH("/:id/update", middlewares.AuthorizeJWTMiddleware(), middlewares.RBACMiddleware("update_tag"), controllers.UpdateTag)
+		tagRouter.PATCH("/:id/soft-delete", middlewares.AuthorizeJWTMiddleware(), middlewares.RBACMiddleware("soft-delete_tag"), controllers.SoftDeleteTag)
+		tagRouter.PATCH("/:id/restore", middlewares.AuthorizeJWTMiddleware(), middlewares.RBACMiddleware("restore_tag"), controllers.RestoreTag)
+		tagRouter.GET("", controllers.FindTag)
+	}
+
+	//Topic
+	topicRouter := router.Group("topics")
+	{
+		topicRouter.POST("/add", middlewares.AuthorizeJWTMiddleware(), middlewares.RBACMiddleware("add_topic"), controllers.CreateTopic)
+		topicRouter.PATCH("/:id/update", middlewares.AuthorizeJWTMiddleware(), middlewares.RBACMiddleware("update_topic"), controllers.UpdateTopic)
+		topicRouter.PATCH("/:id/soft-delete", middlewares.AuthorizeJWTMiddleware(), middlewares.RBACMiddleware("soft-delete_topic"), controllers.SoftDeleteTopic)
+		topicRouter.PATCH("/:id/restore", middlewares.AuthorizeJWTMiddleware(), middlewares.RBACMiddleware("restore_topic"), controllers.RestoreTopic)
+		topicRouter.GET("", controllers.FindTopic)
 	}
 
 	//Blog
 	blogRouter := router.Group("blogs")
 	{
-		blogRouter.POST("/add", controllers.CreateBlog)
+		blogRouter.POST("/add", middlewares.AuthorizeJWTMiddleware(), controllers.CreateBlog)
+		blogRouter.PATCH("/:id/update", middlewares.AuthorizeJWTMiddleware(), controllers.UpdateBlog)
+		blogRouter.PATCH("/:id/soft-delete", middlewares.AuthorizeJWTMiddleware(), controllers.SoftDeleteBlog)
+		blogRouter.PATCH("/:id/restore", middlewares.AuthorizeJWTMiddleware(), controllers.RestoreBlog)
+		blogRouter.PATCH("/:id/lock-comment", middlewares.AuthorizeJWTMiddleware(), controllers.LockComment)
+		blogRouter.PATCH("/:id/unlock-comment", middlewares.AuthorizeJWTMiddleware(), controllers.UnLockComment)
 		blogRouter.GET("/search", controllers.GetListBlogs)
-		blogRouter.GET("/:id/detail", controllers.GetBlog)
+		blogRouter.GET("/:id/detail", middlewares.OptionalAuthMiddleware(), controllers.GetBlog)
 		blogRouter.GET("/:id/comments", controllers.GetCommentFromBlog)
 	}
 
+	//Event
+	eventRouter := router.Group("events")
+	{
+		eventRouter.POST("/add", middlewares.AuthorizeJWTMiddleware(), controllers.CreateEvent)
+		eventRouter.PATCH("/:id/update", middlewares.AuthorizeJWTMiddleware(), controllers.UpdateEvent)
+		eventRouter.GET("/:id/detail", middlewares.OptionalAuthMiddleware(), controllers.GetEvent)
+		eventRouter.GET("/search", controllers.GetListEvents)
+		eventRouter.GET("/:id/ticket_types", controllers.GetListTicketTypes)
+		eventRouter.POST("/:id/registration", middlewares.AuthorizeJWTMiddleware(), controllers.RegistrationEvent)
+	}
+	//Registration
+	regisRouter := router.Group("registrations")
+	{
+		regisRouter.POST("/:id/ticket/generate", middlewares.AuthorizeJWTMiddleware(), controllers.GenerateTickets)
+	}
 	//Comment
 	commentRouter := router.Group("comments")
 	{
@@ -85,4 +117,19 @@ func Register(router *gin.RouterGroup, redisClient *redis.Client) {
 		commentRouter.PATCH("/:id/restore", controllers.RestoreComment)
 		commentRouter.GET("/:id/reply", controllers.GetCommentReplies)
 	}
+
+	//Ticket Type
+	ticketTypeRouter := router.Group("ticket_types")
+	{
+		ticketTypeRouter.Use(middlewares.AuthorizeJWTMiddleware())
+		ticketTypeRouter.POST("/add", controllers.CreateTicketType)
+		ticketTypeRouter.PATCH("/:id/update", controllers.UpdateTicketType)
+	}
+
+	//Media
+	mediaRouter := router.Group("medias")
+	{
+		mediaRouter.POST("/upload", middlewares.MaxBodySizeMiddleware(10*1024*1024), controllers.UploadMedia)
+	}
+
 }

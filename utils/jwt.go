@@ -21,6 +21,9 @@ func GenerateToken(userID, email string, roles []string, duration int, typeToken
 		secretKey string = configs.GetJWTSecret()
 		issuer    string = configs.GetJWTIssuer()
 	)
+	if duration <= 0 {
+		return "", nil, fmt.Errorf("duration không hợp lệ %d", duration)
+	}
 	tokenId, _ := uuid.NewRandom()
 
 	claims := &JwtCustomClaim{

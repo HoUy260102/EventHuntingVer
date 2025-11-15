@@ -2,6 +2,7 @@ package utils
 
 import (
 	"EventHunting/dto"
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -38,4 +39,18 @@ func GetAccountID(c *gin.Context) (primitive.ObjectID, bool) {
 	}
 
 	return updatorObjectId, true
+}
+
+func GetRoles(c *gin.Context) ([]string, error) {
+	rolesInterface, ok := c.Get("roles")
+	if !ok {
+		return nil, errors.New("Không tìm thấy roles trong context")
+	}
+
+	roles, ok := rolesInterface.([]string)
+	if !ok {
+		return nil, errors.New("Kiểu dữ liệu roles không hợp lệ (phải là []string)")
+	}
+
+	return roles, nil
 }

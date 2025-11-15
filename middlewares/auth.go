@@ -2,8 +2,10 @@ package middlewares
 
 import (
 	"EventHunting/collections"
+	"EventHunting/database"
 	"EventHunting/utils"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -19,6 +21,9 @@ var (
 
 func AuthorizeJWTMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var (
+			redisClient = database.GetRedisClient().Client
+		)
 		authHeader := c.GetHeader("Authorization")
 		authHeader = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 		if authHeader == "" {
@@ -26,7 +31,19 @@ func AuthorizeJWTMiddleware() gin.HandlerFunc {
 				"status":  http.StatusBadRequest,
 				"message": "Token không thấy!",
 			})
-			c.Abort() // ngăn handler tiếp tục chạy
+			c.Abort()
+			return
+		}
+		key := fmt.Sprintf("blacklist:accesstoken:%s", authHeader)
+		result, err := redisClient.Exists(c.Request.Context(), key).Result()
+		if err != nil {
+			utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống redis blacklist!", err.Error())
+			c.Abort()
+			return
+		}
+		if result != 0 {
+			utils.ResponseError(c, http.StatusUnauthorized, "Token hiện tại không dùng được!", nil)
+			c.Abort()
 			return
 		}
 		token, err := utils.ValidateToken(authHeader)
@@ -48,7 +65,40 @@ func AuthorizeJWTMiddleware() gin.HandlerFunc {
 				"status":  http.StatusUnauthorized,
 				"message": err.Error(),
 			})
-			c.Abort() // ngăn handler tiếp tục chạy
+			c.Abort()
+			return
+		}
+	}
+}
+
+func OptionalAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		authHeader = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
+		if authHeader == "" {
+			c.Next()
+			return
+		}
+		token, err := utils.ValidateToken(authHeader)
+		tokenClaims, _ := utils.ExtractCustomClaims(token.Raw)
+		if token.Valid {
+			if slices.Contains(unAvailableToken, tokenClaims.Type) {
+				c.JSON(http.StatusUnauthorized, gin.H{
+					"status":  http.StatusUnauthorized,
+					"message": "Không có quyền truy cập",
+				})
+				c.Abort()
+				return
+			}
+			c.Set("roles", tokenClaims.Roles)
+			c.Set("account_id", tokenClaims.RegisteredClaims.Subject)
+			c.Next()
+		} else {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"status":  http.StatusUnauthorized,
+				"message": err.Error(),
+			})
+			c.Abort()
 			return
 		}
 	}

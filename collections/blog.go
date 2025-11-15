@@ -1,12 +1,14 @@
 package collections
 
 import (
-	"EventHunting/consts"
 	"EventHunting/database"
 	"EventHunting/utils"
 	"context"
+	"log"
+	"strconv"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -14,21 +16,24 @@ import (
 )
 
 type Blog struct {
-	ID                primitive.ObjectID `bson:"_id" json:"id"`
-	Title             string             `bson:"title" json:"title"`
-	View              int                `bson:"view" json:"view"`
-	ThumbnailLink     string             `bson:"thumbnail_link,omitempty" json:"thumbnail_link"`
-	ThumbnailPublicId string             `bson:"thumbnail_public_id,omitempty" json:"thumbnail_public_id"`
+	ID           primitive.ObjectID `bson:"_id" json:"id"`
+	Title        string             `bson:"title" json:"title"`
+	View         int                `bson:"view" json:"view"`
+	ThumbnailUrl string             `bson:"thumbnail_url,omitempty" json:"thumbnail_url"`
+	ThumbnailID  primitive.ObjectID `bson:"thumbnail_id,omitempty" json:"thumbnail_id"`
 
 	Content     string `bson:"content"`
 	ContentHtml string `bson:"content_html"`
 	//PublicImgIds []string             `bson:"public_img_ids,omitempty" json:"public_img_ids,omitempty"`
-	Medias []struct {
-		Type   consts.MediaFormat `bson:"type" json:"type"` // Image, Video
-		Url    string             `bson:"url" json:"url"`
-		Status consts.MediaStatus `bson:"status" json:"status"` // Process, Pending, Success, Error
-	} `bson:"medias" json:"medias"`
+	//Medias []struct {
+	//	Type   consts.MediaFormat `bson:"type" json:"type"` // Image, Video
+	//	Url    string             `bson:"url" json:"url"`
+	//	Status consts.MediaStatus `bson:"status" json:"status"` // Process, Pending, Success, Error
+	//} `bson:"medias" json:"medias"`
+	MediaIDs []primitive.ObjectID `bson:"media_ids,omitempty" json:"media_ids,omitempty"`
+	Medias   []Media              `bson:"-" json:"medias"`
 
+	Comments      []Comment            `bson:"-" json:"comments"`
 	TagIds        []primitive.ObjectID `bson:"tag_ids,omitempty" json:"tag_ids,omitempty"`
 	IsEdit        bool                 `bson:"is_edit" json:"is_edit"`
 	IsLockComment bool                 `bson:"is_lock_comment" json:"is_lock_comment"`
@@ -41,8 +46,8 @@ type Blog struct {
 	CreatedBy primitive.ObjectID `bson:"created_by" json:"created_by"`
 	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
 	UpdatedBy primitive.ObjectID `bson:"updated_by" json:"updated_by"`
-	DeletedAt time.Time          `bson:"deleted_at" json:"deleted_at"`
-	DeletedBy primitive.ObjectID `bson:"deleted_by" json:"deleted_by"`
+	DeletedAt time.Time          `bson:"deleted_at,omitempty" json:"deleted_at,omitempty"`
+	DeletedBy primitive.ObjectID `bson:"deleted_by,omitempty" json:"deleted_by,omitempty"`
 }
 
 type Blogs []Blog
@@ -51,16 +56,21 @@ func (u *Blog) getCollectionName() string {
 	return "blogs"
 }
 
-func (u *Blog) Create() error {
+func (u *Blog) Create(ctx context.Context) error {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		db          = database.GetDB()
-		err         error
+		db  = database.GetDB()
+		err error
 	)
-	defer cancel()
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
 
 	// TODO: Thêm log
-	u.ID = primitive.NewObjectID()
+	if u.ID.IsZero() {
+		u.ID = primitive.NewObjectID()
+	}
 	_, err = db.Collection(u.getCollectionName()).InsertOne(ctx, u)
 
 	// TODO: Thêm vào redis nếu sử dụng cache-aside
@@ -71,12 +81,16 @@ func (u *Blog) Create() error {
 	return nil
 }
 
-func (u *Blog) First(filter bson.M, opts ...*options.FindOneOptions) error {
+func (u *Blog) First(ctx context.Context, filter bson.M, opts ...*options.FindOneOptions) error {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		db          = database.GetDB()
+		db = database.GetDB()
 	)
-	defer cancel()
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
 
 	err := db.Collection(u.getCollectionName()).FindOne(ctx, filter, opts...).Decode(u)
 	if err != nil {
@@ -85,16 +99,20 @@ func (u *Blog) First(filter bson.M, opts ...*options.FindOneOptions) error {
 	return nil
 }
 
-func (u *Blog) FindById(id primitive.ObjectID) error {
+func (u *Blog) FindById(ctx context.Context, id primitive.ObjectID) error {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		db          = database.GetDB()
-		filter      = bson.M{
+		db     = database.GetDB()
+		filter = bson.M{
 			"_id":        id,
 			"deleted_at": bson.M{"$exists": false},
 		}
 	)
-	defer cancel()
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
 
 	var blog Blog
 	err := db.Collection(u.getCollectionName()).FindOne(ctx, filter).Decode(&blog)
@@ -104,13 +122,18 @@ func (u *Blog) FindById(id primitive.ObjectID) error {
 	return nil
 }
 
-func (u *Blog) Find(filter bson.M, opts ...*options.FindOptions) (Blogs, error) {
+func (u *Blog) Find(ctx context.Context, filter bson.M, opts ...*options.FindOptions) (Blogs, error) {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		db          = database.GetDB()
-		blogs       Blogs
+		db    = database.GetDB()
+		blogs Blogs
 	)
-	defer cancel()
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
+
 	if filter == nil {
 		filter = bson.M{}
 	}
@@ -133,12 +156,16 @@ func (u *Blog) Find(filter bson.M, opts ...*options.FindOptions) (Blogs, error) 
 	return blogs, nil
 }
 
-func (u *Blog) Update(filter bson.M, updateDoc bson.M, opts ...*options.UpdateOptions) error {
+func (u *Blog) Update(ctx context.Context, filter bson.M, updateDoc bson.M, opts ...*options.UpdateOptions) error {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		db          = database.GetDB()
+		db = database.GetDB()
 	)
-	defer cancel()
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
 
 	if filter == nil {
 		filter = bson.M{}
@@ -156,12 +183,37 @@ func (u *Blog) Update(filter bson.M, updateDoc bson.M, opts ...*options.UpdateOp
 	return nil
 }
 
-func (u *Blog) CountDocuments(filter bson.M) (int64, error) {
+func (u *Blog) DeleteMany(ctx context.Context, filter bson.M) error {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		db          = database.GetDB()
+		db  = database.GetDB()
+		err error
 	)
-	defer cancel()
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
+
+	_, err = db.Collection(u.getCollectionName()).DeleteMany(ctx, filter)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (u *Blog) CountDocuments(ctx context.Context, filter bson.M) (int64, error) {
+	var (
+		db = database.GetDB()
+	)
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
+
 	if filter == nil {
 		filter = bson.M{}
 	}
@@ -172,6 +224,76 @@ func (u *Blog) CountDocuments(filter bson.M) (int64, error) {
 		return 0, err
 	}
 	return count, nil
+}
+
+func (u *Blog) GetView() int {
+	redisClient := database.GetRedisClient().Client
+	coldCount := u.View
+	var hotCount int
+
+	if redisClient == nil {
+		log.Println("Lỗi do redis nil!")
+		return coldCount
+	}
+
+	redisKey := "views:blog:" + u.ID.Hex()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	hotViewStr, err := redisClient.Get(ctx, redisKey).Result()
+
+	if err == redis.Nil {
+		hotCount = 0
+	} else if err != nil {
+		log.Printf("Lỗi do redis %s: %v", u.ID.Hex(), err)
+		return coldCount
+	} else {
+		hotCount, err = strconv.Atoi(hotViewStr)
+		if err != nil {
+			log.Printf("Corrupt view count in Redis for blog %s (value: %s): %v", u.ID.Hex(), hotViewStr, err)
+			hotCount = 0
+		}
+	}
+
+	return hotCount + coldCount
+}
+
+func getBlogViewRedisKey(blogID primitive.ObjectID) string {
+	return "views:blog:" + blogID.Hex()
+}
+
+func getBlogUniqueKey(blogID primitive.ObjectID) string {
+	today := time.Now().UTC().Format("2006-01-02")
+	return "unique_views:blog:" + blogID.Hex() + ":" + today
+}
+
+func (u *Blog) IncrementBlogView(accountID string) {
+	redisClient := database.GetRedisClient().Client
+	if redisClient == nil {
+		log.Println("Redis client nil")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	uniqueKey := getBlogUniqueKey(u.ID)
+	// Thêm account vào Set.
+	added, err := redisClient.SAdd(ctx, uniqueKey, accountID).Result()
+	if err != nil {
+		log.Printf("Lỗi khi add và sadd view trong blog %s: %v", u.ID.Hex(), err)
+		return
+	}
+
+	redisClient.Expire(ctx, uniqueKey, 25*time.Hour)
+
+	if added == 1 {
+		err := redisClient.Incr(ctx, getBlogViewRedisKey(u.ID)).Err()
+		if err != nil {
+			log.Printf("Lỗi khi tăng view blog redis %s: %v", u.ID.Hex(), err)
+		}
+	}
 }
 
 func (u *Blog) Preload(entries *Blogs, properties ...string) error {
@@ -203,6 +325,9 @@ func (u *Blog) Preload(entries *Blogs, properties ...string) error {
 				return result
 			})
 
+			if len(accountIDs) == 0 {
+				continue
+			}
 			filterAccount := bson.M{
 				"_id": bson.M{
 					"$in": accountIDs,
@@ -310,6 +435,10 @@ func (u *Blog) Preload(entries *Blogs, properties ...string) error {
 			tagIds := utils.ExtractUniqueIDs[Blog](*entries, func(blog Blog) []primitive.ObjectID {
 				return blog.TagIds
 			})
+
+			if len(tagIds) == 0 {
+				continue
+			}
 			var (
 				tagEntry = &Tag{}
 				tagsMap  = make(map[primitive.ObjectID]Tag)
@@ -332,7 +461,7 @@ func (u *Blog) Preload(entries *Blogs, properties ...string) error {
 			var (
 				commentEntry = &Comment{}
 				filter       = bson.M{
-					"blog_id": u.ID,
+					"document_id": u.ID,
 					"deleted_at": bson.M{
 						"$exists": false,
 					},
@@ -353,11 +482,15 @@ func (u *Blog) Preload(entries *Blogs, properties ...string) error {
 			for _, blog := range *entries {
 				blogIds = append(blogIds, blog.ID)
 			}
+
+			if len(blogIds) == 0 {
+				continue
+			}
 			//Lấy count cmt từ mỗi blog
 			pipeline := []bson.M{
 				{
 					"$match": bson.M{
-						"blog_id": bson.M{"$in": blogIds},
+						"document_id": bson.M{"$in": blogIds},
 						"deleted_at": bson.M{
 							"$exists": false,
 						},
@@ -365,7 +498,7 @@ func (u *Blog) Preload(entries *Blogs, properties ...string) error {
 				},
 				{
 					"$group": bson.M{
-						"_id":           "$blog_id",
+						"_id":           "$document_id",
 						"comment_count": bson.M{"$sum": 1},
 					},
 				},
@@ -375,11 +508,80 @@ func (u *Blog) Preload(entries *Blogs, properties ...string) error {
 				return err
 			}
 			for _, b := range blogCountCmt {
-				bObjectID, _ := b["_id"].(primitive.ObjectID)
-				blogCountCmtMap[bObjectID] = b["comment_count"].(int32)
+				id, ok1 := b["_id"].(primitive.ObjectID)
+				cnt, ok2 := b["comment_count"].(int32)
+				if ok1 && ok2 {
+					blogCountCmtMap[id] = cnt
+				}
 			}
 			for i := range *entries {
-				(*entries)[i].CommentCount = int(blogCountCmtMap[(*entries)[i].ID])
+				if cnt, ok := blogCountCmtMap[(*entries)[i].ID]; ok {
+					(*entries)[i].CommentCount = int(cnt)
+				} else {
+					(*entries)[i].CommentCount = 0
+				}
+			}
+		case "MediaFirst":
+			if len(u.MediaIDs) == 0 {
+				continue
+			}
+			var (
+				mediaEntry  = &Media{}
+				mediaFilter = bson.M{
+					"_id": bson.M{
+						"$in": u.MediaIDs,
+					},
+				}
+			)
+			medias, _ := mediaEntry.Find(nil, mediaFilter)
+			u.Medias = medias
+		case "MediaFind":
+			mediaIds := utils.ExtractUniqueIDs[Blog](*entries, func(blog Blog) []primitive.ObjectID {
+				return blog.MediaIDs
+			})
+			if len(mediaIds) == 0 {
+				continue
+			}
+			var (
+				mediaEntry = &Media{}
+				mediasMap  = make(map[primitive.ObjectID]Media)
+			)
+			medias, err := mediaEntry.Find(nil, bson.M{"_id": bson.M{"$in": mediaIds}})
+			if err != nil {
+				return err
+			}
+			for _, media := range medias {
+				mediasMap[media.ID] = media
+			}
+			for i := range *entries {
+				mediasRe := []Media{}
+				for _, mediaID := range (*entries)[i].MediaIDs {
+					mediasRe = append(mediasRe, mediasMap[mediaID])
+				}
+				(*entries)[i].Medias = mediasRe
+			}
+		case "CommentFirst":
+			var (
+				commentEntry  = &Comment{}
+				commentFilter = bson.M{
+					"document_id": u.ID,
+					"parent_id": bson.M{
+						"$exists": false,
+					},
+					"deleted_at": bson.M{
+						"$exists": false,
+					},
+				}
+			)
+			comments, _ := commentEntry.Find(commentFilter)
+			err := commentEntry.Preload(comments, "AccountFind", "MediaFind")
+
+			if err != nil {
+				return err
+			}
+
+			if len(comments) > 0 {
+				u.Comments = comments
 			}
 		}
 	}
@@ -388,15 +590,14 @@ func (u *Blog) Preload(entries *Blogs, properties ...string) error {
 
 func (u *Blog) ParseEntry() bson.M {
 	result := bson.M{
-		"_id":                 u.ID,
-		"title":               u.Title,
-		"view":                u.View,
-		"thumbnail_link":      u.ThumbnailLink,
-		"thumbnail_public_id": u.ThumbnailPublicId,
-		"comment_count":       u.CommentCount,
-		"content":             u.Content,
-		"content_html":        u.ContentHtml,
-		//"public_img_ids":      u.PublicImgIds,
+		"_id":             u.ID,
+		"title":           u.Title,
+		"view":            u.GetView(),
+		"thumbnail_url":   u.ThumbnailUrl,
+		"thumbnail_id":    u.ThumbnailID,
+		"comment_count":   u.CommentCount,
+		"content":         u.Content,
+		"content_html":    u.ContentHtml,
 		"medias":          u.Medias,
 		"is_edit":         u.IsEdit,
 		"is_lock_comment": u.IsLockComment,
@@ -425,6 +626,22 @@ func (u *Blog) ParseEntry() bson.M {
 			)
 		}
 		result["tags"] = tags
+	}
+
+	if len(u.Medias) > 0 {
+		medias := []bson.M{}
+		for _, media := range u.Medias {
+			medias = append(medias, media.ParseEntry())
+		}
+		result["medias"] = medias
+	}
+
+	if len(u.Comments) > 0 {
+		comments := []bson.M{}
+		for _, comment := range u.Comments {
+			comments = append(comments, comment.ParseEntry())
+		}
+		result["comments"] = comments
 	}
 
 	return result

@@ -5,12 +5,11 @@ import (
 	"fmt"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 )
 
-func SetupRouter(redisClient *redis.Client) error {
+func SetupRouter() error {
 	r := gin.Default()
 	api := r.Group("/api/v1")
-	Register(api, redisClient)
+	Register(api)
 	return r.Run(fmt.Sprintf(":%s", configs.GetServerPort()))
 }

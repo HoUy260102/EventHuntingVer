@@ -4,6 +4,7 @@ import (
 	"EventHunting/collections"
 	"EventHunting/utils"
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -13,7 +14,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-func deletedCommentMedias(publicUrlIDs []string) []error {
+func deletedCommentMedias(UrlIDs []string) error {
 	var (
 		batchSize = 100
 		cld       = utils.GetCloudinary()
@@ -24,13 +25,13 @@ func deletedCommentMedias(publicUrlIDs []string) []error {
 	var allErrors []error
 	var mu sync.Mutex
 	//Chia thành nhiều batch để xóa
-	for i := 0; i < len(publicUrlIDs); i += batchSize {
+	for i := 0; i < len(UrlIDs); i += batchSize {
 		end := i + batchSize
-		if end > len(publicUrlIDs) {
-			end = len(publicUrlIDs)
+		if end > len(UrlIDs) {
+			end = len(UrlIDs)
 		}
 
-		batch := publicUrlIDs[i:end]
+		batch := UrlIDs[i:end]
 		params := admin.DeleteAssetsParams{
 			PublicIDs: batch,
 		}
@@ -40,7 +41,7 @@ func deletedCommentMedias(publicUrlIDs []string) []error {
 		go func(p admin.DeleteAssetsParams, batchIndex int) {
 			defer wg.Done()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
 			defer cancel()
 
 			var batchErr error
@@ -63,42 +64,56 @@ func deletedCommentMedias(publicUrlIDs []string) []error {
 	wg.Wait()
 
 	if len(allErrors) > 0 {
-		return allErrors
+		return errors.Join(allErrors...)
 	}
 	return nil
 }
 
-func DeletedMedias(collectionName string) []error {
+func DeletedMedias(collectionName string) error {
 	var (
 		softDeleteDays = 30
 		mediaEntry     = &collections.Media{}
 		err            error
 		filter         = bson.M{
-			"deleted_at": bson.M{
-				"$lte": time.Now().Add(-time.Duration(softDeleteDays) * 24 * time.Hour),
+			"$or": []bson.M{
+				{
+					"status": "PENDING",
+					"created_at": bson.M{
+						"$lte": time.Now().Add(-time.Duration(softDeleteDays) * 24 * time.Hour),
+					},
+				},
+				{
+					"status": "DELETED",
+				},
 			},
 			"collection_name": collectionName,
 		}
 		maxDBRetry = 5
 	)
-	publicUrlIDs := make([]string, 0)
+	UrlIDs := make([]string, 0)
 	mediaIDs := make([]primitive.ObjectID, 0)
+
 	//Lấy tất cả các media đã xóa mềm quá 30 ngày
 	medias, err := mediaEntry.Find(filter)
 	if err != nil {
-		return []error{err}
+		return err
 	}
+
+	if len(medias) == 0 {
+		return nil
+	}
+
 	//Thêm publicUrlIds, mediaIds vào danh sách cần xóa
 	for _, media := range medias {
-		publicUrlIDs = append(publicUrlIDs, media.PublicUrlId)
+		UrlIDs = append(UrlIDs, media.UrlId)
 		mediaIDs = append(mediaIDs, media.ID)
 	}
-	//Xóa các media trên cld
-	errs := deletedCommentMedias(publicUrlIDs)
 
-	if len(errs) > 0 {
-		return errs
+	//Xóa các media trên cld
+	if err = deletedCommentMedias(UrlIDs); err != nil {
+		return fmt.Errorf("Lỗi xóa ảnh trên cld: %w", err)
 	}
+
 	//Xóa media trong db
 	deleteFilter := bson.M{
 		"_id": bson.M{
@@ -108,15 +123,15 @@ func DeletedMedias(collectionName string) []error {
 
 	//Thực hiện retry để đảm bảm sẽ xóa media trong db
 	for i := 0; i < maxDBRetry; i++ {
-		err = mediaEntry.DeleteMany(deleteFilter)
+		err = mediaEntry.DeleteMany(nil, deleteFilter)
 		if err == nil {
 			break
 		}
-		time.Sleep(time.Duration(i+1) * 2 * time.Second)
+		time.Sleep(time.Duration(1<<i) * time.Second)
 	}
 
 	if err != nil {
-		return []error{fmt.Errorf("Lỗi xóa ảnh trong Db: %w", err)}
+		return fmt.Errorf("Lỗi xóa ảnh trong Db: %w", err)
 	}
 
 	return nil

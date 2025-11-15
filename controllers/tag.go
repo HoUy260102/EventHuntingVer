@@ -319,3 +319,22 @@ func RestoreTag(c *gin.Context) {
 		})
 	}
 }
+
+func FindTag(c *gin.Context) {
+	var (
+		tagEntry   = &collections.Tag{}
+		baseFilter = bson.M{
+			"deleted_at": bson.M{"$exists": false},
+		}
+	)
+	tags, err := tagEntry.Find(baseFilter)
+
+	switch {
+	case err != nil && !errors.Is(err, mongo.ErrNoDocuments):
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+	case len(tags) == 0:
+		utils.ResponseError(c, http.StatusNotFound, "", nil)
+	default:
+		utils.ResponseSuccess(c, http.StatusOK, "", tags, nil)
+	}
+}

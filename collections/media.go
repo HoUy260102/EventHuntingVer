@@ -12,29 +12,33 @@ import (
 )
 
 type Media struct {
-	ID          primitive.ObjectID `bson:"_id" json:"id"`
-	Url         string             `bson:"url" json:"url"`
-	PublicUrlId string             `bson:"public_url_id" json:"public_url_id"`
-	Type        consts.MediaFormat `bson:"type" json:"type"`
+	ID        primitive.ObjectID `bson:"_id" json:"id"`
+	Url       string             `bson:"url" json:"url"`
+	UrlId     string             `bson:"url_id" json:"url_id"`
+	Type      consts.MediaFormat `bson:"type" json:"type"`
+	Status    consts.MediaStatus `bson:"status" json:"status"`
+	Extension string             `bson:"extension" json:"extension"`
 
-	Status         string             `bson:"status" json:"status"`
-	CollectionName string             `bson:"collection_name" json:"collection_name"`
-	DocumentId     primitive.ObjectID `bson:"document_id" json:"document_id"`
-
-	DeletedAt time.Time `bson:"deleted_at,omitempty" json:"deleted_at,omitempty"`
+	CollectionName string    `bson:"collection_name" json:"collection_name"`
+	CreatedAt      time.Time `bson:"created_at" json:"created_at"`
 }
+
+type Medias []Media
 
 func (u *Media) getCollectionName() string {
 	return "medias"
 }
 
-func (u *Media) First(filter bson.M, opts ...*options.FindOneOptions) error {
+func (u *Media) First(ctx context.Context, filter bson.M, opts ...*options.FindOneOptions) error {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		db          = database.GetDB()
-		err         error
+		db  = database.GetDB()
+		err error
 	)
-	defer cancel()
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
 
 	err = db.Collection(u.getCollectionName()).FindOne(ctx, filter, opts...).Decode(u)
 	if err != nil {
@@ -43,14 +47,18 @@ func (u *Media) First(filter bson.M, opts ...*options.FindOneOptions) error {
 	return nil
 }
 
-func (u *Media) Find(filter bson.M, opts ...*options.FindOptions) ([]Media, error) {
+func (u *Media) Find(ctx context.Context, filter bson.M, opts ...*options.FindOptions) ([]Media, error) {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		db          = database.GetDB()
-		medias      []Media
-		err         error
+		db     = database.GetDB()
+		medias []Media
+		err    error
 	)
-	defer cancel()
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
 
 	cursor, err := db.Collection(u.getCollectionName()).Find(ctx, filter, opts...)
 	if err != nil {
@@ -73,14 +81,22 @@ func (u *Media) Find(filter bson.M, opts ...*options.FindOptions) ([]Media, erro
 	return medias, nil
 }
 
-func (u *Media) Create() error {
+func (u *Media) Create(ctx context.Context) error {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		db          = database.GetDB()
-		err         error
+		db  = database.GetDB()
+		err error
 	)
-	defer cancel()
-	u.ID = primitive.NewObjectID()
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
+
+	if u.ID.IsZero() {
+		u.ID = primitive.NewObjectID()
+	}
+
 	_, err = db.Collection(u.getCollectionName()).InsertOne(ctx, u)
 	if err != nil {
 		return err
@@ -88,13 +104,18 @@ func (u *Media) Create() error {
 	return nil
 }
 
-func (u *Media) CreateMany(medias []Media, opts ...*options.InsertManyOptions) error {
+func (u *Media) CreateMany(ctx context.Context, medias []Media, opts ...*options.InsertManyOptions) error {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 10*time.Second)
-		db          = database.GetDB()
-		err         error
+		db  = database.GetDB()
+		err error
 	)
-	defer cancel()
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
+
 	_, err = db.Collection(u.getCollectionName()).InsertMany(ctx, toInterfaceSlice(medias), opts...)
 	if err != nil {
 		return err
@@ -102,13 +123,18 @@ func (u *Media) CreateMany(medias []Media, opts ...*options.InsertManyOptions) e
 	return nil
 }
 
-func (u *Media) Update(filter bson.M, update bson.M, opts ...*options.UpdateOptions) error {
+func (u *Media) Update(ctx context.Context, filter bson.M, update bson.M, opts ...*options.UpdateOptions) error {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		db          = database.GetDB()
-		err         error
+		db  = database.GetDB()
+		err error
 	)
-	defer cancel()
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
+
 	_, err = db.Collection(u.getCollectionName()).UpdateOne(ctx, filter, update, opts...)
 	if err != nil {
 		return err
@@ -116,13 +142,18 @@ func (u *Media) Update(filter bson.M, update bson.M, opts ...*options.UpdateOpti
 	return nil
 }
 
-func (u *Media) UpdateMany(filter bson.M, update bson.M, opts ...*options.UpdateOptions) error {
+func (u *Media) UpdateMany(ctx context.Context, filter bson.M, update bson.M, opts ...*options.UpdateOptions) error {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		db          = database.GetDB()
-		err         error
+		db  = database.GetDB()
+		err error
 	)
-	defer cancel()
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
+
 	_, err = db.Collection(u.getCollectionName()).UpdateMany(ctx, filter, update, opts...)
 	if err != nil {
 		return err
@@ -130,18 +161,35 @@ func (u *Media) UpdateMany(filter bson.M, update bson.M, opts ...*options.Update
 	return nil
 }
 
-func (u *Media) DeleteMany(filter bson.M, opts ...*options.DeleteOptions) error {
+func (u *Media) DeleteMany(ctx context.Context, filter bson.M, opts ...*options.DeleteOptions) error {
 	var (
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-		db          = database.GetDB()
-		err         error
+		db  = database.GetDB()
+		err error
 	)
-	defer cancel()
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
+
 	_, err = db.Collection(u.getCollectionName()).DeleteMany(ctx, filter, opts...)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+func (u *Media) ParseEntry() bson.M {
+	result := bson.M{
+		"id":        u.ID,
+		"url":       u.Url,
+		"url_id":    u.UrlId,
+		"extention": u.Extension,
+		"type":      u.Type,
+		"status":    u.Status,
+	}
+	return result
 }
 
 func toInterfaceSlice(medias []Media) []interface{} {

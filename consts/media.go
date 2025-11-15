@@ -4,8 +4,9 @@ type MediaFormat string
 type MediaStatus string
 
 const (
-	MEDIA_IMAGE MediaFormat = "IMAGE"
-	MEDIA_VIDEO MediaFormat = "VIDEO"
+	MEDIA_IMAGE   MediaFormat = "IMAGE"
+	MEDIA_VIDEO   MediaFormat = "VIDEO"
+	MEDIA_UNKNOWN MediaFormat = "UNKNOWN"
 )
 
 const (

@@ -27,26 +27,49 @@ func (s *Session) getCollectionName() string {
 	return "sessions"
 }
 
-func (u *Session) FindById(db *mongo.Database, ctx context.Context, sessionId primitive.ObjectID) (Session, error) {
-	var session Session
-	err := db.Collection(u.getCollectionName()).FindOne(ctx, bson.M{"_id": sessionId}).Decode(&session)
-	if err != nil {
-		return Session{}, err
+func (u *Session) FindById(ctx context.Context, sessionId primitive.ObjectID) error {
+	var (
+		db = database.GetDB()
+	)
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 	}
-	return session, nil
+	err := db.Collection(u.getCollectionName()).FindOne(ctx, bson.M{"_id": sessionId}).Decode(u)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func (u *Session) First(db *mongo.Database, ctx context.Context, filter bson.M) (Session, error) {
-	var session Session
-	err := db.Collection(u.getCollectionName()).FindOne(ctx, filter).Decode(&session)
-	if err != nil {
-		return Session{}, err
+func (u *Session) First(ctx context.Context, filter bson.M) error {
+	var (
+		db = database.GetDB()
+	)
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 	}
-	return session, nil
+	err := db.Collection(u.getCollectionName()).FindOne(ctx, filter).Decode(u)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func (u *Session) Find(db *mongo.Database, ctx context.Context, filter bson.M, opts ...*options.FindOptions) ([]Session, error) {
-	var sessions []Session
+func (u *Session) Find(ctx context.Context, filter bson.M, opts ...*options.FindOptions) ([]Session, error) {
+	var (
+		db       = database.GetDB()
+		sessions []Session
+	)
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+	}
 
 	cursor, err := db.Collection(u.getCollectionName()).Find(ctx, filter, opts...)
 	if err != nil {
@@ -61,12 +84,38 @@ func (u *Session) Find(db *mongo.Database, ctx context.Context, filter bson.M, o
 	return sessions, nil
 }
 
-func (u *Session) Create(db *mongo.Database, ctx context.Context, session Session) (*mongo.InsertOneResult, error) {
-	return db.Collection(u.getCollectionName()).InsertOne(ctx, session)
+func (u *Session) Create(ctx context.Context, session Session) error {
+	var (
+		db = database.GetDB()
+	)
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+	}
+	if u.Id.IsZero() {
+		u.Id = primitive.NewObjectID()
+	}
+	_, err := db.Collection(u.getCollectionName()).InsertOne(ctx, session)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
-func (u *Session) Update(db *mongo.Database, ctx context.Context, filter bson.M, update bson.M) error {
-	res, err := db.Collection(u.getCollectionName()).UpdateOne(ctx, filter, update)
+func (u *Session) Update(ctx context.Context, filter bson.M, update bson.M, opts ...*options.UpdateOptions) error {
+	var (
+		db = database.GetDB()
+	)
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+	}
+
+	res, err := db.Collection(u.getCollectionName()).UpdateOne(ctx, filter, update, opts...)
 	if err != nil {
 		return err
 	}
@@ -76,9 +125,22 @@ func (u *Session) Update(db *mongo.Database, ctx context.Context, filter bson.M,
 	return nil
 }
 
-func (u *Session) Delete(db *mongo.Database, ctx context.Context, filter bson.M) error {
+func (u *Session) Delete(ctx context.Context, filter bson.M) error {
+	var (
+		db = database.GetDB()
+	)
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+	}
+
 	_, err := db.Collection(u.getCollectionName()).DeleteOne(ctx, filter)
-	return err
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (u *Session) FindOneAndUpdate(session Session) (Session, error) {
