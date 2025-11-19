@@ -68,3 +68,8 @@ Mặc định MongoDB chạy ở chế độ Standalone (không Transaction). B�
 
 Tạo file `.env` tại thư mục gốc dự án.
 Điền các thông số giống trong file .env.example
+
+## Bước 5: Chạy ứng dụng
+go run main.go
+
+## License
