@@ -5,6 +5,7 @@ import (
 	"EventHunting/configs"
 	"EventHunting/consts"
 	"EventHunting/database"
+	"EventHunting/utils"
 	"context"
 	"errors"
 	"fmt"
@@ -28,7 +29,7 @@ func HandleExpiredRegistrations() {
 		"created_at": bson.M{"$lt": expirationTime},
 	}
 
-	expiredRegs, err := regisEntry.Find(ctx, filter)
+	expiredRegs, err := regisEntry.Find(ctx, utils.GetFilter(filter))
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return

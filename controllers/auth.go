@@ -3,6 +3,7 @@ package controllers
 import (
 	"EventHunting/collections"
 	"EventHunting/configs"
+	"EventHunting/consts"
 	"EventHunting/database"
 	"EventHunting/dto"
 	"EventHunting/utils"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/markbates/goth/gothic"
+	"github.com/redis/go-redis/v9"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -107,57 +109,13 @@ func Login(c *gin.Context) {
 	//Kiểm tra mật khẩu, và set redis cho tài khoản đăng nhập sai
 	loginFailedPrefix := fmt.Sprintf("login_failed:%s:%s", c.ClientIP(), loginRequest.Email)
 	if !utils.CheckPassword(existedAccount.Password, loginRequest.Password) {
-		// Sử dụng redisClient được truyền vào
-		count, err := redisClient.Incr(ctx, loginFailedPrefix).Result()
-		if err != nil {
-			log.Println("Redis INCR error:", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"message": "Internal server error"})
-			return
-		}
-
-		// Set TTL chỉ khi key mới được tạo
-		if count == 1 {
-			err := redisClient.Expire(ctx, loginFailedPrefix, loginFailedTime).Err()
-			if err != nil {
-				log.Println("Redis EXPIRE error:", err)
-			}
-		}
-
-		// Kiểm tra số lần login fail
-		if count > int64(maxLoginFailedCount) {
-			err := accountCollection.Update(bson.M{
-				"email": loginRequest.Email,
-			}, bson.M{
-				"$set": bson.M{
-					"is_locked":    true,
-					"lock_at":      time.Now(),
-					"lock_util":    time.Now().Add(loginFailedTime),
-					"lock_message": "Đăng nhập quá nhiều lần vui lòng thử lại sau, " + time.Now().Add(loginFailedTime).Format("2006-01-02 15:04:05"),
-				},
-			})
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"status":  http.StatusInternalServerError,
-					"message": err.Error(),
-				})
-				return
-			}
-			c.JSON(http.StatusBadRequest, gin.H{
-				"status":  http.StatusBadRequest,
-				"message": "Đăng nhập quá nhiều lần vui lòng thử lại sau" + time.Now().Add(loginFailedTime).Format("2006-01-02 15:04:05"),
-			})
-			return
-		}
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  http.StatusBadRequest,
-			"message": "Tài khoản đăng nhập hoặc mật khẩu không chính xác",
-		})
+		handleLoginFailure(c, redisClient, loginRequest.Email, loginFailedPrefix)
 		return
 	}
 
 	//Set lại cài đặt nếu người dùng đăng nhập đúng
 	if existedAccount.IsLocked == true {
-		if !existedAccount.LockUtil.IsZero() && existedAccount.LockUtil.Before(time.Now()) {
+		if !existedAccount.LockUtil.IsZero() && existedAccount.LockUtil.Before(time.Now()) && existedAccount.LockReason == consts.LockReasonLoginFail {
 			err := accountCollection.Update(bson.M{
 				"email": loginRequest.Email,
 			}, bson.M{
@@ -176,7 +134,15 @@ func Login(c *gin.Context) {
 				return
 			}
 		}
+		if existedAccount.LockReason != consts.LockReasonLoginFail {
+			c.JSON(http.StatusBadRequest, bson.M{
+				"status":  http.StatusBadRequest,
+				"message": existedAccount.LockMessage,
+			})
+			return
+		}
 	}
+
 	//Xóa key login fail trong redis nếu đăng nhập thành công
 	redisClient.Del(ctx, loginFailedPrefix)
 
@@ -227,6 +193,60 @@ func Login(c *gin.Context) {
 			"refresh_token_expired_at": refreshTokenClaims.ExpiresAt.Time,
 		},
 	})
+}
+
+func handleLoginFailure(c *gin.Context, redisClient *redis.Client, email string, loginFailedPrefix string) {
+	var (
+		accountCollection = &collections.Account{}
+	)
+	// Tăng biến đếm trong Redis
+	count, err := redisClient.Incr(c.Request.Context(), loginFailedPrefix).Result()
+	if err != nil {
+		log.Println("Redis INCR error:", err)
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+		return
+	}
+
+	// Set TTL chỉ khi key mới được tạo
+	if count == 1 {
+		err := redisClient.Expire(c.Request.Context(), loginFailedPrefix, loginFailedTime).Err()
+		if err != nil {
+			log.Println("Redis EXPIRE error:", err)
+			utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+			return
+		}
+	}
+
+	// Kiểm tra số lần login fail
+	if count > int64(maxLoginFailedCount) {
+		lockTime := time.Now().Add(loginFailedTime)
+		lockMessage := "Đăng nhập quá nhiều lần vui lòng thử lại sau, " + lockTime.Format("2006-01-02 15:04:05")
+
+		// Cập nhật DB khóa tài khoản
+		err := accountCollection.Update(bson.M{
+			"email": email,
+		}, bson.M{
+			"$set": bson.M{
+				"is_locked":    true,
+				"lock_at":      time.Now(),
+				"lock_util":    lockTime,
+				"lock_message": lockMessage,
+				"lock_reason":  consts.LockReasonLoginFail,
+			},
+		})
+
+		if err != nil {
+			utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+			return
+		}
+
+		// Trả về lỗi bị khóa
+		utils.ResponseError(c, http.StatusBadRequest, lockMessage, nil)
+		return
+	}
+
+	// Trả về lỗi sai mật khẩu thông thường (chưa bị khóa)
+	utils.ResponseError(c, http.StatusBadRequest, "Tài khoản đăng nhập hoặc mật khẩu không chính xác!", nil)
 }
 
 func RenewAccessToken(c *gin.Context) {
@@ -395,15 +415,20 @@ func OAuthCallback(c *gin.Context) {
 
 	err = accountEntry.First(bson.M{
 		"email": user.Email,
+		"deleted_at": bson.M{
+			"$exists": false,
+		},
 	})
 
-	switch {
-	case err == nil:
-	case errors.Is(err, mongo.ErrNoDocuments):
-	default:
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			//Đăng ký tài khoản mới
+			return
+		}
 		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 		return
 	}
+
 	roles, _ := GetRolesFromAccount(*accountEntry)
 	accessToken, accessTokenClaims, err := utils.GenerateToken(accountEntry.ID.Hex(), user.Email, roles, configs.GetJWTAccessExp(), "access")
 	if err != nil {
@@ -445,40 +470,4 @@ func OAuthCallback(c *gin.Context) {
 			"refresh_token_expired_at": refreshTokenClaims.ExpiresAt.Time,
 		},
 	})
-
-	//payload := fmt.Sprintf(`{
-	//    "access_token": "%s",
-	//    "refresh_token": "%s",
-	//}`, accessToken, refreshToken)
-	//html := fmt.Sprintf(`
-	//<html>
-	//  <body>
-	//    <script>
-	//      window.opener.postMessage(%s, "http://localhost:5173");
-	//      window.close();
-	//    </script>
-	//  </body>
-	//</html>
-	//`, payload)
-	//
-	//c.Data(http.StatusOK, "text/html", []byte(html))
 }
-
-//func GetCurrentRole(account collections.Account, redisClient *redis.Client) (string, error) {
-//	var (
-//		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-//		roleEntry   = &collections.Role{}
-//	)
-//	defer cancel()
-//	role, err := redisClient.Get(ctx, fmt.Sprintf("auth:account:%s:current_role", account.ID.Hex())).Result()
-//	if err == redis.Nil {
-//		_ = roleEntry.First(bson.M{
-//			"_id": account.RoleId,
-//		})
-//		redisClient.Set(ctx, fmt.Sprintf("auth:account:%s:current_role", account.ID.Hex()), roleEntry.Name, 0)
-//		return roleEntry.Name, nil
-//	} else if err != nil {
-//		return "", err
-//	}
-//	return role, nil
-//}

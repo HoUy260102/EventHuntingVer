@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"EventHunting/collections"
+	"EventHunting/consts"
 	"EventHunting/dto"
 	"EventHunting/utils"
 	"errors"
@@ -262,7 +263,6 @@ func UpdateAccount(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": http.StatusInternalServerError, "message": "Roles trong context không đúng định dạng (cần []string)"})
 		return
 	}
-
 	if updatorObjectId.Hex() != accountId {
 		// Nếu không phải chính chủ, kiểm tra xem có phải Admin không
 		if !slices.Contains(updatorRoles, "Admin") { // Giả sử role Admin
@@ -275,7 +275,6 @@ func UpdateAccount(c *gin.Context) {
 	}
 
 	// KIỂM TRA LOGIC VAI TRÒ
-
 	err = roleEntry.First(bson.M{"_id": accountEntry.RoleId})
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
@@ -754,6 +753,7 @@ func LockAccount(c *gin.Context) {
 		"is_locked":    true,
 		"lock_at":      time.Now(),
 		"lock_message": req.Message,
+		"lock_reason":  consts.LockReasonAdminBan,
 		"updated_at":   time.Now(),
 		"updated_by":   updatorObjectId,
 	}
@@ -860,6 +860,7 @@ func UnlockAccount(c *gin.Context) {
 			"lock_at":      "",
 			"lock_util":    "",
 			"lock_message": "",
+			"lock_reason":  "",
 		},
 	}
 

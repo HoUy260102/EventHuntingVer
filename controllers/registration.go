@@ -419,6 +419,32 @@ func validateRegistrationRules(
 		return validationErrors, lstTicketTypes, requestedTicketsMap, totalPrice, totalNewTickets
 	}
 
+	//Kiểm tra thời hạn đăng ký
+	now := time.Now()
+	fmt.Println("now -------> ", now)
+	if !eventEntry.EventTime.EndDate.IsZero() {
+
+		deadline := eventEntry.EventTime.EndDate
+		if eventEntry.EventTime.StartTime != "" {
+			parsedStart, err := time.Parse("15:04", eventEntry.EventTime.StartTime)
+			if err == nil {
+				deadline = time.Date(
+					deadline.Year(), deadline.Month(), deadline.Day(),
+					parsedStart.Hour(), parsedStart.Minute(), 0, 0,
+					deadline.Location(),
+				)
+			}
+		}
+		minutesToSubtract := 60
+		deadline = deadline.Add(time.Duration(-minutesToSubtract) * time.Minute)
+		if now.After(deadline) {
+			timeStr := deadline.Format("15:04 02/01/2006")
+			msg := fmt.Sprintf("Đã hết hạn đăng ký. Sự kiện ngày cuối cùng đã bắt đầu lúc %s.", timeStr)
+			validationErrors = append(validationErrors, msg)
+			return validationErrors, lstTicketTypes, requestedTicketsMap, totalPrice, totalNewTickets
+		}
+	}
+
 	var ticketTypeIDs []primitive.ObjectID
 	hasInvalidQuantity := false
 

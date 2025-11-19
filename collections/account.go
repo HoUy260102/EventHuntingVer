@@ -1,6 +1,7 @@
 package collections
 
 import (
+	"EventHunting/consts"
 	"EventHunting/database"
 	"context"
 	"fmt"
@@ -29,11 +30,11 @@ type Account struct {
 	UserInfo      *User      `bson:"user_info,omitempty" json:"user_info,omitempty"`
 
 	// --- Trạng thái khóa tài khoản ---
-	IsLocked    bool      `bson:"is_locked" json:"is_locked"`
-	LockAt      time.Time `bson:"lock_at,omitempty" json:"lock_at,omitempty"`
-	LockUtil    time.Time `bson:"lock_util,omitempty" json:"lock_util,omitempty"`
-	LockMessage string    `bson:"lock_message,omitempty" json:"lock_message,omitempty"`
-
+	IsLocked    bool              `bson:"is_locked" json:"is_locked"`
+	LockAt      time.Time         `bson:"lock_at,omitempty" json:"lock_at,omitempty"`
+	LockUtil    time.Time         `bson:"lock_util,omitempty" json:"lock_util,omitempty"`
+	LockMessage string            `bson:"lock_message,omitempty" json:"lock_message,omitempty"`
+	LockReason  consts.LockReason `bson:"lock_reason,omitempty" json:"lock_reason,omitempty"`
 	// --- Xác minh tài khoản ---
 	IsVerified        bool      `bson:"is_verified" json:"is_verified"`
 	VerifiedAt        time.Time `bson:"verified_at,omitempty" json:"verified_at,omitempty"`

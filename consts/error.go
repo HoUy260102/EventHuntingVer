@@ -19,3 +19,12 @@ var (
 	ErrTicketProcessing     = errors.New("lỗi khi xử lý vé")
 	ErrEmailBuild           = errors.New("lỗi khi tạo nội dung email")
 )
+
+type LockReason string
+
+const (
+	// Khóa do đăng nhập sai quá nhiều lần
+	LockReasonLoginFail LockReason = "LOGIN_FAIL"
+	// Khóa do admin thực hiện (vi phạm chính sách, v.v.)
+	LockReasonAdminBan LockReason = "ADMIN_BAN"
+)

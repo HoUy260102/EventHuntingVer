@@ -833,9 +833,21 @@ func GetBlog(c *gin.Context) {
 
 func GetCommentFromBlog(c *gin.Context) {
 	var (
-		commentEntry       = &collections.Comment{}
-		limit        int64 = 10
+		commentEntry = &collections.Comment{}
+		lastID       primitive.ObjectID
+		err          error
 	)
+
+	pagination := dto.GetPagination(c, "primary")
+	if pagination.LastId == "" {
+		lastID = primitive.NilObjectID
+	} else {
+		lastID, err = primitive.ObjectIDFromHex(pagination.LastId)
+		if err != nil {
+			utils.ResponseError(c, http.StatusBadRequest, "", nil)
+			return
+		}
+	}
 
 	blogIDParam := c.Param("id")
 	blogID, err := primitive.ObjectIDFromHex(blogIDParam)
@@ -847,24 +859,10 @@ func GetCommentFromBlog(c *gin.Context) {
 		return
 	}
 
-	lastIDParam := c.Query("last_id")
-	var lastID primitive.ObjectID
-
-	if lastIDParam != "" {
-		lastID, err = primitive.ObjectIDFromHex(lastIDParam)
-		if err != nil {
-			c.JSON(http.StatusBadRequest, dto.ApiResponse{
-				Status:  http.StatusBadRequest,
-				Message: "Last ID không hợp lệ!",
-			})
-			return
-		}
-	}
-
 	filter := bson.M{
-		"blog_id":    blogID,
-		"parent_id":  bson.M{"$exists": false},
-		"deleted_at": bson.M{"$exists": false},
+		"document_id": blogID,
+		"parent_id":   bson.M{"$exists": false},
+		"deleted_at":  bson.M{"$exists": false},
 	}
 
 	if !lastID.IsZero() {
@@ -873,7 +871,7 @@ func GetCommentFromBlog(c *gin.Context) {
 
 	findOptions := options.Find()
 	findOptions.SetSort(bson.D{{"_id", 1}})
-	findOptions.SetLimit(limit + 1)
+	findOptions.SetLimit(int64(pagination.Length) + 1)
 
 	// Thực thi truy vấn
 	comments, err := commentEntry.Find(filter, findOptions)
@@ -914,29 +912,20 @@ func GetCommentFromBlog(c *gin.Context) {
 		commentsRes = append(commentsRes, utils.PrettyJSON(cmt.ParseEntry()))
 	}
 
-	// Xử lý kết quả cho hasMore
-	hasMore := false
-	if len(commentsRes) > int(limit) {
-		hasMore = true
-		commentsRes = commentsRes[:limit]
-	}
+	pagination.TotalDocs = len(commentsRes)
 
-	var nextLastID primitive.ObjectID
+	if len(commentsRes) > pagination.Length {
+		commentsRes = commentsRes[:pagination.Length]
+	}
 
 	if len(commentsRes) > 0 {
-		nextLastID = comments[len(commentsRes)-1].ID
+		pagination.LastId = comments[len(commentsRes)-1].ID.Hex()
 	}
+	// Xử lý kết quả cho hasMore
+	pagination.BuildPagination()
 
 	// Trả về kết quả
-	c.JSON(http.StatusOK, dto.ApiResponse{
-		Status:  http.StatusOK,
-		Message: "Lấy replies thành công.",
-		Data:    commentsRes,
-		Pagination: &dto.Pagination{
-			HasMore: hasMore,
-			LastId:  nextLastID.Hex(),
-		},
-	})
+	utils.ResponseSuccess(c, http.StatusOK, "", commentsRes, &pagination)
 }
 
 func LockComment(c *gin.Context) {
