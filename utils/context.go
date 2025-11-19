@@ -54,3 +54,11 @@ func GetRoles(c *gin.Context) ([]string, error) {
 
 	return roles, nil
 }
+
+func GetClientIpAdrr(c *gin.Context) string {
+	ipAdrr := c.ClientIP()
+	if ipAdrr == "::1" {
+		ipAdrr = "127.0.0.1"
+	}
+	return ipAdrr
+}

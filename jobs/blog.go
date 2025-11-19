@@ -131,9 +131,10 @@ func DeleteBlog() error {
 	return nil
 }
 
-func UpdateViewsBlogToMongo(ctx context.Context) {
+func UpdateViewsBlogToMongo() {
 	var (
 		blogEntry = &collections.Blog{}
+		ctx       = context.Background()
 	)
 	log.Println("Worker: bắt đầu ...")
 	redisClient := database.GetRedisClient().Client

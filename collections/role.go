@@ -12,17 +12,17 @@ import (
 )
 
 type Role struct {
-	Id            primitive.ObjectID   `bson:"_id"`
-	Name          string               `bson:"name"`
-	Status        string               `bson:"status"`
-	PermissionIds []primitive.ObjectID `bson:"permission_ids,omitempty"`
+	Id            primitive.ObjectID   `bson:"_id" json:"id"`
+	Name          string               `bson:"name" json:"name"`
+	Status        string               `bson:"status" json:"status"`
+	PermissionIds []primitive.ObjectID `bson:"permission_ids,omitempty" json:"permission_ids"`
 
-	CreatedAt time.Time          `bson:"createdAt"`
-	CreatedBy primitive.ObjectID `bson:"created_by"`
-	UpdatedAt time.Time          `bson:"updated_at"`
-	UpdatedBy primitive.ObjectID `bson:"updated_by"`
-	Deletedat time.Time          `bson:"deleted_at,omitempty"`
-	DeletedBy primitive.ObjectID `bson:"deleted_by,omitempty"`
+	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
+	CreatedBy primitive.ObjectID `bson:"created_by" json:"created_by"`
+	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
+	UpdatedBy primitive.ObjectID `bson:"updated_by" json:"updated_by"`
+	DeletedAt time.Time          `bson:"deleted_at,omitempty" json:"deleted_at"`
+	DeletedBy primitive.ObjectID `bson:"deleted_by,omitempty" json:"deleted_by"`
 }
 
 func (u *Role) getCollectionName() string {

@@ -40,9 +40,10 @@ type Event struct {
 		Address string `bson:"address" json:"address"`
 		MapURL  string `bson:"map_url,omitempty" json:"map_url,omitempty"`
 	} `bson:"event_location" json:"event_location"`
-	TopicIDs   []primitive.ObjectID `bson:"topic_ids" json:"topic_ids"`
-	IsEdit     bool                 `bson:"is_edit" json:"is_edit"`
-	ProvinceId primitive.ObjectID   `bson:"province_id" json:"province_id"`
+	TopicIDs         []primitive.ObjectID `bson:"topic_ids" json:"topic_ids"`
+	IsEdit           bool                 `bson:"is_edit" json:"is_edit"`
+	ProvinceId       primitive.ObjectID   `bson:"province_id" json:"province_id"`
+	MaxTicketPerUser int                  `bson:"max_ticket_per_user" json:"max_ticket_per_user"`
 
 	Status       string      `bson:"-" json:"status,omitempty"`
 	Account      Account     `bson:"-" json:"organizer_info,omitempty"`
@@ -585,16 +586,16 @@ func (u *Event) ParseEntry() bson.M {
 			"address": u.EventLocation.Address,
 			"map_url": u.EventLocation.MapURL,
 		},
-		"ticket_types":  u.TicketTypes,
-		"province":      u.Province,
-		"topic_ids":     u.TopicIDs,
-		"comment_count": u.CommentCount,
-		"created_at":    u.CreatedAt,
-		"created_by":    u.CreatedBy,
-		"updated_at":    u.UpdatedAt,
-		"updated_by":    u.UpdatedBy,
-		"deleted_at":    u.DeletedAt,
-		"deleted_by":    u.DeletedBy,
+		"max_ticket_per_user": u.MaxTicketPerUser,
+		"province":            u.Province,
+		"topic_ids":           u.TopicIDs,
+		"comment_count":       u.CommentCount,
+		"created_at":          u.CreatedAt,
+		"created_by":          u.CreatedBy,
+		"updated_at":          u.UpdatedAt,
+		"updated_by":          u.UpdatedBy,
+		"deleted_at":          u.DeletedAt,
+		"deleted_by":          u.DeletedBy,
 	}
 
 	//Xử lý event status
@@ -646,5 +647,12 @@ func (u *Event) ParseEntry() bson.M {
 		result["comments"] = comments
 	}
 
+	if len(u.TicketTypes) > 0 {
+		ticketTypes := []bson.M{}
+		for _, ticketType := range u.TicketTypes {
+			ticketTypes = append(ticketTypes, ticketType.ParseEntry())
+		}
+		result["ticket_types"] = ticketTypes
+	}
 	return result
 }

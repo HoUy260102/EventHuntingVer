@@ -13,10 +13,10 @@ import (
 )
 
 type Registration struct {
-	ID        primitive.ObjectID  `bson:"_id" json:"id"`
-	EventID   primitive.ObjectID  `bson:"event_id" json:"event_id"`
-	InvoiceID *primitive.ObjectID `bson:"invoice_id" json:"invoice_id"`
-
+	ID                     primitive.ObjectID `bson:"_id" json:"id"`
+	EventID                primitive.ObjectID `bson:"event_id" json:"event_id"`
+	InvoiceID              primitive.ObjectID `bson:"invoice_id" json:"invoice_id"`
+	PaymentTransactionCode string             `bson:"payment_transaction_code" json:"payment_transaction_code"`
 	//PaymentMethod *string    `bson:"payment_method" json:"payment_method"`
 	//Type
 	Tickets []struct {
@@ -30,7 +30,7 @@ type Registration struct {
 	PaidAt            *time.Time `bson:"paid_at,omitempty" json:"paid_at,omitempty"`
 	CancelledAt       *time.Time `bson:"cancelled_at,omitempty" json:"cancelled_at,omitempty"`
 	TicketEmailSentAt *time.Time `bson:"ticket_email_sent_at,omitempty" json:"ticket_email_sent_at,omitempty"`
-	
+
 	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
 	CreatedBy primitive.ObjectID `bson:"created_by" json:"created_by"`
 	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`

@@ -47,3 +47,13 @@ pagination:
   secondary:
     default_length: 15
     default_max_length: 100
+
+vn_pay:
+  tmncode: ${VNPAY_TMNCODE}
+  hash_secret: ${VNPAY_HASH_SECRET}
+  url: ${VNPAY_URL}
+
+jobs:
+  registration:
+    expiration_minutes: 17
+  max_retries : 3

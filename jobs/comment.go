@@ -51,7 +51,7 @@ func DeleteComment() error {
 		}
 	)
 
-	medias, err := mediaEntry.Find(mediaFilter)
+	medias, err := mediaEntry.Find(nil, mediaFilter)
 	if err != nil {
 		return err
 	}

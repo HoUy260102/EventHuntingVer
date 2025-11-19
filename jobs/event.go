@@ -12,9 +12,10 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-func UpdateViewsEventToMongo(ctx context.Context) {
+func UpdateViewsEventToMongo() {
 	var (
 		eventEntry = &collections.Event{}
+		ctx        = context.Background()
 	)
 	log.Println("Worker: bắt đầu ...")
 	redisClient := database.GetRedisClient().Client
@@ -47,11 +48,11 @@ func UpdateViewsEventToMongo(ctx context.Context) {
 				continue
 			}
 
-			// 3. Trích xuất ID từ key
-			idStr := strings.TrimPrefix(key, "views:blog:")
+			//Trích xuất ID từ key
+			idStr := strings.TrimPrefix(key, "views:event:")
 			eventID, err := primitive.ObjectIDFromHex(idStr)
 			if err != nil {
-				log.Printf("Worker: Invalid blog ID from key %s", key)
+				log.Printf("Worker: Invalid event ID from key %s", key)
 				continue
 			}
 

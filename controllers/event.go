@@ -32,21 +32,26 @@ func CreateEvent(c *gin.Context) {
 		utils.ResponseError(c, http.StatusBadRequest, "Lỗi do bind dữ liệu", err.Error())
 		return
 	}
+
 	//Validate dữ liệu
 	if validateErrs := utils.ValidateEventCreateReq(req); len(validateErrs) > 0 {
 		utils.ResponseError(c, http.StatusBadRequest, "", strings.Join(validateErrs, ", "))
 		return
 	}
+
+	//Lấy ID của người tạo event
 	creatorID, ok := utils.GetAccountID(c)
 	if !ok {
 		return
 	}
+
 	newEvent := collections.Event{
-		Name:          req.Name,
-		EventInfo:     req.EventInfo,
-		EventInfoHtml: req.EventInfoHtml,
-		View:          0,
-		Active:        true,
+		Name:             req.Name,
+		EventInfo:        req.EventInfo,
+		EventInfoHtml:    req.EventInfoHtml,
+		View:             0,
+		MaxTicketPerUser: req.MaxTicketPerUser,
+		Active:           true,
 		EventTime: struct {
 			StartDate time.Time `bson:"start_date" json:"start_date"`
 			EndDate   time.Time `bson:"end_date" json:"end_date"`
@@ -66,6 +71,7 @@ func CreateEvent(c *gin.Context) {
 		UpdatedAt:            time.Now(),
 		UpdatedBy:            creatorID,
 	}
+
 	//Kiểm tra trường không bắt buộc
 	mediaIDs := []primitive.ObjectID{}
 	if req.ThumbnailId != nil {
@@ -123,6 +129,7 @@ func CreateEvent(c *gin.Context) {
 	if req.TopicIDs != nil && len(*req.TopicIDs) > 0 {
 		newEvent.TopicIDs = *req.TopicIDs
 	}
+
 	//Logic check province
 	provinceFilter := bson.M{
 		"_id": req.ProvinceID,
@@ -155,7 +162,7 @@ func CreateEvent(c *gin.Context) {
 
 	err = mongo.WithSession(ctx, session, func(sessCtx mongo.SessionContext) error {
 		_, err := sessCtx.WithTransaction(sessCtx, func(sessCtx mongo.SessionContext) (interface{}, error) {
-			// 1. Update media nếu có
+			// Update media nếu có
 			if len(mediaIDs) > 0 {
 				mediaFilter := bson.M{"_id": bson.M{"$in": mediaIDs}, "status": "PENDING"}
 				mediaUpdate := bson.M{"$set": bson.M{"status": "SUCCESS"}}
@@ -172,7 +179,7 @@ func CreateEvent(c *gin.Context) {
 				}
 			}
 
-			// 2. Tạo blog mới
+			// Tạo blog mới
 			if err := newEvent.Create(sessCtx); err != nil {
 				return nil, err
 			}
@@ -333,6 +340,7 @@ func UpdateEvent(c *gin.Context) {
 			return
 		}
 	}
+
 	// Xử lý logic Media
 	// Xử lý Thumbnail
 	if req.ThumbnailId != nil {
@@ -443,11 +451,7 @@ func UpdateEvent(c *gin.Context) {
 	case errors.Is(err, mongo.ErrNoDocuments):
 		utils.ResponseError(c, http.StatusBadRequest, "", "Một số media không tìm thấy")
 	default:
-		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-			Status:  http.StatusInternalServerError,
-			Message: "Lỗi hệ thống khi cập nhật!",
-			Error:   err.Error(),
-		})
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 	}
 }
 

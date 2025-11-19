@@ -16,12 +16,10 @@ type Ticket struct {
 
 	EventID      primitive.ObjectID `json:"event_id" bson:"event_id"`
 	TicketTypeID primitive.ObjectID `json:"ticket_type_id" bson:"ticket_type_id"`
-	InvoiceID    primitive.ObjectID `json:"invoice_id" bson:"invoice_id"`
+	RegisID      primitive.ObjectID `json:"regis_id" bson:"regis_id"`
 
-	// Cần tạo unique index trên qr_code_data trong MongoDB
 	QRCodeData string `json:"qr_code_data" bson:"qr_code_data"`
 
-	// --- Trạng Thái (Lifecycle) ---
 	Status consts.TicketStatus `json:"status" bson:"status"`
 
 	CheckedInAt []string `json:"checked_in_at,omitempty" bson:"checked_in_at,omitempty"`
@@ -36,6 +34,24 @@ type Tickets []Ticket
 
 func (u *Ticket) getCollectionName() string {
 	return "tickets"
+}
+
+func (u *Ticket) First(ctx context.Context, filter bson.M, opts ...*options.FindOneOptions) error {
+	var (
+		db = database.GetDB()
+	)
+
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+	}
+
+	err := db.Collection(u.getCollectionName()).FindOne(ctx, filter, opts...).Decode(u)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (u *Ticket) Find(ctx context.Context, filter bson.M, opts ...*options.FindOptions) (Tickets, error) {

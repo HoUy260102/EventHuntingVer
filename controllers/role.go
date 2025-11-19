@@ -80,7 +80,7 @@ func AssignPermissionsToRole(c *gin.Context) {
 	}
 	update = bson.M{
 		"$addToSet": bson.M{"permission_ids": bson.M{"$each": permissionRequests}},
-		"$set":      bson.M{"updatedAt": time.Now(), "updated_by": updatorObjectId},
+		"$set":      bson.M{"updated_at": time.Now(), "updated_by": updatorObjectId},
 	}
 
 	err = roleCollection.UpdateOne(filter, update)
@@ -155,7 +155,7 @@ func RemovePermissionFromRole(c *gin.Context) {
 	}
 	update = bson.M{
 		"$pull": bson.M{"permission_ids": bson.M{"$in": permissionRequests}},
-		"$set":  bson.M{"updatedAt": time.Now(), "updated_by": updatorObjectId},
+		"$set":  bson.M{"updated_at": time.Now(), "updated_by": updatorObjectId},
 	}
 
 	//Update
@@ -200,7 +200,7 @@ func GetPermissionFromRole(c *gin.Context) {
 	}
 
 	// Role tồn tại
-	err = roleCollection.First(bson.M{"_id": roleObjectId})
+	err = roleCollection.First(utils.GetFilter(bson.M{"_id": roleObjectId}))
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			c.JSON(http.StatusNotFound, gin.H{"status": http.StatusNotFound, "message": "Không tìm thấy role"})
@@ -210,9 +210,9 @@ func GetPermissionFromRole(c *gin.Context) {
 		return
 	}
 
-	permissions, err = permissionCollection.Find(bson.M{
+	permissions, err = permissionCollection.Find(utils.GetFilter(bson.M{
 		"_id": bson.M{"$in": roleCollection.PermissionIds},
-	})
+	}))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  http.StatusInternalServerError,
@@ -291,7 +291,7 @@ func SoftDeleteRole(c *gin.Context) {
 			"status":     "deleted",
 			"deleted_at": time.Now(),
 			"deleted_by": updatorObjectId,
-			"updatedAt":  time.Now(),
+			"updated_at": time.Now(),
 			"updated_by": updatorObjectId,
 		},
 	}
@@ -363,7 +363,7 @@ func RestoreRole(c *gin.Context) {
 	filterUpdate = bson.M{"_id": roleObjectId}
 	update = bson.M{
 		"$unset": bson.M{"deleted_at": "", "deleted_by": ""},
-		"$set":   bson.M{"status": "active", "updatedAt": time.Now(), "updated_by": updatorObjectId},
+		"$set":   bson.M{"status": "active", "updated_at": time.Now(), "updated_by": updatorObjectId},
 	}
 
 	// Update

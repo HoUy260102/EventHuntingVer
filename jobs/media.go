@@ -94,7 +94,7 @@ func DeletedMedias(collectionName string) error {
 	mediaIDs := make([]primitive.ObjectID, 0)
 
 	//Lấy tất cả các media đã xóa mềm quá 30 ngày
-	medias, err := mediaEntry.Find(filter)
+	medias, err := mediaEntry.Find(nil, filter)
 	if err != nil {
 		return err
 	}

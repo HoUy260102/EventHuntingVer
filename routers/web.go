@@ -103,10 +103,10 @@ func Register(router *gin.RouterGroup) {
 		eventRouter.POST("/:id/registration", middlewares.AuthorizeJWTMiddleware(), controllers.RegistrationEvent)
 	}
 	//Registration
-	regisRouter := router.Group("registrations")
-	{
-		regisRouter.POST("/:id/ticket/generate", middlewares.AuthorizeJWTMiddleware(), controllers.GenerateTickets)
-	}
+	//regisRouter := router.Group("registrations")
+	//{
+	//	regisRouter.POST("/:id/ticket/generate", middlewares.AuthorizeJWTMiddleware(), controllers.HandleCallbackVNPAY)
+	//}
 	//Comment
 	commentRouter := router.Group("comments")
 	{
@@ -132,4 +132,7 @@ func Register(router *gin.RouterGroup) {
 		mediaRouter.POST("/upload", middlewares.MaxBodySizeMiddleware(10*1024*1024), controllers.UploadMedia)
 	}
 
+	router.GET("/vnpay_return", func(c *gin.Context) {
+		controllers.HandleCallbackVNPAY(c)
+	})
 }

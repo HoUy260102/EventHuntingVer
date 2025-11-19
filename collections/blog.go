@@ -425,7 +425,12 @@ func (u *Blog) Preload(entries *Blogs, properties ...string) error {
 			}
 
 			tagEntry := &Tag{}
-			tags, err := tagEntry.Find(bson.M{"_id": bson.M{"$in": u.TagIds}})
+			tags, err := tagEntry.Find(bson.M{
+				"_id": bson.M{"$in": u.TagIds},
+				"deleted_at": bson.M{
+					"$exists": false,
+				},
+			})
 			if err != nil {
 				return err
 			}
@@ -443,7 +448,12 @@ func (u *Blog) Preload(entries *Blogs, properties ...string) error {
 				tagEntry = &Tag{}
 				tagsMap  = make(map[primitive.ObjectID]Tag)
 			)
-			tags, err := tagEntry.Find(bson.M{"_id": bson.M{"$in": tagIds}})
+			tags, err := tagEntry.Find(bson.M{
+				"_id": bson.M{"$in": tagIds},
+				"deleted_at": bson.M{
+					"$exists": false,
+				},
+			})
 			if err != nil {
 				return err
 			}

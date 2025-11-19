@@ -181,3 +181,40 @@ func (u *TicketType) DeleteMany(ctx context.Context, filter bson.M) error {
 
 	return nil
 }
+
+func (t *TicketType) ParseEntry() bson.M {
+	result := bson.M{
+		"_id":              t.ID,
+		"event_id":         t.EventID,
+		"name":             t.Name,
+		"description":      t.Description,
+		"registered_count": t.RegisteredCount,
+		"status":           t.Status,
+		"created_at":       t.CreatedAt,
+		"created_by":       t.CreatedBy,
+		"updated_at":       t.UpdatedAt,
+		"updated_by":       t.UpdatedBy,
+	}
+
+	if t.Price == 0 {
+		result["price"] = "Vé miễn phí"
+	} else {
+		result["price"] = t.Price
+	}
+
+	if t.Quantity != nil {
+		result["quantity"] = *t.Quantity
+	} else {
+		result["quantity"] = "Vé này không giới hạn số lượng bán vé!"
+	}
+
+	if !t.DeletedAt.IsZero() {
+		result["deleted_at"] = t.DeletedAt
+	}
+
+	if t.DeletedBy != primitive.NilObjectID {
+		result["deleted_by"] = t.DeletedBy
+	}
+
+	return result
+}

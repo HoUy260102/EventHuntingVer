@@ -9,9 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -148,7 +146,7 @@ func CreateBlog(c *gin.Context) {
 			// 1. Update media nếu có
 			if len(mediaIDs) > 0 {
 				mediaFilter := bson.M{"_id": bson.M{"$in": mediaIDs}, "status": "PENDING"}
-				mediaUpdate := bson.M{"$set": bson.M{"status": "SUCCESS"}}
+				mediaUpdate := bson.M{"$set": bson.M{"status": consts.MediaStatusSuccess}}
 				const maxRetry = 3
 				for i := 0; i < maxRetry; i++ {
 					if err := mediaEntry.UpdateMany(sessCtx, mediaFilter, mediaUpdate); err != nil {
@@ -717,59 +715,48 @@ func GetListBlogs(c *gin.Context) {
 		blogEntry = &collections.Blog{}
 	)
 	queryMap := c.Request.URL.Query()
-
 	// Lấy 'page'
-	pageStr := c.DefaultQuery("page", "1")
-	page, err := strconv.ParseInt(pageStr, 10, 64)
-	if err != nil || page < 1 {
-		page = 1
-	}
+	pagination := dto.GetPagination(c, "primary")
+	skip := (pagination.Page - 1) * pagination.Length
 
-	// Lấy 'limit'
-	limitStr := c.DefaultQuery("limit", "10")
-	limit, err := strconv.ParseInt(limitStr, 10, 64)
-	if err != nil || limit < 1 {
-		limit = 10
-	}
-
-	skip := (page - 1) * limit
-
+	//Filter
 	filter := bson.M{
 		"deleted_at": bson.M{
 			"$exists": false,
 		},
 	}
-
-	//Filter
 	dynamicFilter := utils.BuildBlogSearchFilter(queryMap)
 	for key, value := range dynamicFilter {
 		filter[key] = value
 	}
 
 	findOptions := options.Find()
-	findOptions.SetLimit(limit)
-	findOptions.SetSkip(skip)
+	findOptions.SetLimit(int64(pagination.Length))
+	findOptions.SetSkip(int64(skip))
 
 	//Sort
 	sorts := utils.BuildSortFilter(queryMap)
 	findOptions.SetSort(sorts)
 
 	//Tính toán trang
-	totalDocs, _ := blogEntry.CountDocuments(nil, filter)
-	totalPages := int64(math.Ceil(float64(totalDocs) / float64(limit)))
+	totalDocs, err := blogEntry.CountDocuments(nil, filter)
+	if err != nil {
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+		return
+	}
+	pagination.TotalDocs = int(totalDocs)
+	pagination.BuildPagination()
 
 	//Lấy kết quả tìm kiếm
 	results, err := blogEntry.Find(nil, filter, findOptions)
 	switch {
+	case err == nil && len(results) == 0:
+		utils.ResponseError(c, http.StatusNotFound, "", nil)
 	case err == nil:
 		err = blogEntry.Preload(&results, "AccountFind", "TagFind", "CommentCountFind", "MediaFind")
 		if err != nil {
 			if err != mongo.ErrNoDocuments {
-				c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-					Status:  http.StatusInternalServerError,
-					Message: "Lỗi do hệ thống!",
-					Error:   err.Error(),
-				})
+				utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 				return
 			}
 		}
@@ -777,28 +764,9 @@ func GetListBlogs(c *gin.Context) {
 		for _, blog := range results {
 			res = append(res, utils.PrettyJSON(blog.ParseEntry()))
 		}
-		c.JSON(http.StatusOK, dto.ApiResponse{
-			Status:  http.StatusOK,
-			Message: "Thành công.",
-			Data:    res,
-			Pagination: &dto.Pagination{
-				Page:      int(page),
-				Length:    int(limit),
-				Total:     int(totalPages),
-				TotalDocs: int(totalDocs),
-			},
-		})
-	case len(results) == 0:
-		c.JSON(http.StatusNotFound, dto.ApiResponse{
-			Status:  http.StatusNotFound,
-			Message: "Không tìm thấy kết quả!",
-		})
+		utils.ResponseSuccess(c, http.StatusOK, "", res, &pagination)
 	default:
-		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
-			Status:  http.StatusInternalServerError,
-			Message: "Lỗi do hệ thống!",
-			Error:   err.Error(),
-		})
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 	}
 }
 

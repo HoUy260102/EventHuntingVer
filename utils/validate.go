@@ -440,6 +440,10 @@ func ValidateEventCreateReq(e dto.EventCreateReq) []string {
 		}
 	}
 
+	if e.MaxTicketPerUser <= 0 {
+		errors = append(errors, "Số lượng vé tối đa trên mỗi người phải lớn hơn 0.")
+	}
+
 	if e.Price < 0 {
 		errors = append(errors, "Giá vé không thể là số âm.")
 	}
@@ -524,6 +528,10 @@ func ValidateEventUpdateReq(req dto.EventUpdateReq) []string {
 
 	if req.EventInfoHtml != nil && *req.EventInfoHtml == "" {
 		errs = append(errs, "Thông tin sự kiện (HTML) không được để trống")
+	}
+
+	if req.MaxTicketPerUser != nil && *req.MaxTicketPerUser < 0 {
+		errs = append(errs, "Số vé tối đa/mỗi người phải lớn hơn 0")
 	}
 
 	if req.Price != nil && *req.Price < 0 {

@@ -233,10 +233,14 @@ func GetListTicketTypes(c *gin.Context) {
 
 	opts := options.Find().SetSort(bson.M{"created_at": 1})
 
-	ticketTypesRes, err := ticketTypeEntry.Find(ctx, filterSearch, opts)
+	ticketTypes, err := ticketTypeEntry.Find(ctx, filterSearch, opts)
 
 	switch {
 	case err == nil:
+		ticketTypesRes := []bson.M{}
+		for _, ticketType := range ticketTypes {
+			ticketTypesRes = append(ticketTypesRes, ticketType.ParseEntry())
+		}
 		utils.ResponseSuccess(c, http.StatusOK, "", ticketTypesRes, nil)
 	case err != nil:
 		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())

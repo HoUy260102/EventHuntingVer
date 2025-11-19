@@ -10,6 +10,18 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+func GetFilter(extra bson.M) bson.M {
+	base := bson.M{
+		"deleted_at": bson.M{
+			"$exists": false,
+		},
+	}
+	for k, v := range extra {
+		base[k] = v
+	}
+	return base
+}
+
 func BuildAccountSearchFilter(params map[string][]string) bson.M {
 	filter := bson.M{}
 	andConditions := []bson.M{}

@@ -46,25 +46,19 @@ func CreateTag(c *gin.Context) {
 			"$regex":   "^" + escapedName + "$",
 			"$options": "i",
 		},
-		"deleted_at": bson.M{"$exists": false}, // FIX: Chỉ kiểm tra tag chưa bị xóa
+		"deleted_at": bson.M{"$exists": false},
 	}
 
 	err := tagEntry.First(filter)
 
-	// Xử lý kết quả của First
+	// Xử lý kết quả
 	if err == nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  http.StatusBadRequest,
-			"message": "Tag này đã tồn tại (case-insensitive)",
-		})
+		utils.ResponseError(c, http.StatusConflict, "Lỗi: Tag này đã tồn tại (Trùng lặp Key/Slug)!", nil)
 		return
 	}
 
 	if !errors.Is(err, mongo.ErrNoDocuments) {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  http.StatusInternalServerError,
-			"message": "Lỗi máy chủ khi kiểm tra tag: " + err.Error(),
-		})
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 		return
 	}
 
@@ -91,23 +85,11 @@ func CreateTag(c *gin.Context) {
 
 	switch {
 	case err == nil:
-		c.JSON(http.StatusCreated, gin.H{
-			"status":  http.StatusCreated,
-			"message": "Đã tạo tag thành công",
-			"entry":   utils.PrettyJSON(newTag.ParseEntry()),
-		})
+		utils.ResponseSuccess(c, http.StatusOK, "", utils.PrettyJSON(newTag.ParseEntry()), nil)
 	case mongo.IsDuplicateKeyError(err):
-		c.JSON(http.StatusBadRequest, gin.H{
-			"status":  http.StatusBadRequest,
-			"message": "Lỗi: Tag này đã tồn tại (Trùng lặp Key/Slug)",
-			"error":   err.Error(),
-		})
+		utils.ResponseError(c, http.StatusConflict, "Lỗi: Tag này đã tồn tại (Trùng lặp Key/Slug)!", err.Error())
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  http.StatusInternalServerError,
-			"message": "Lỗi khi tạo tag: " + err.Error(),
-			"error":   err.Error(),
-		})
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 	}
 }
 
@@ -149,10 +131,10 @@ func UpdateTag(c *gin.Context) {
 	err = tagEntry.First(filter)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
-			c.JSON(http.StatusNotFound, gin.H{"status": http.StatusNotFound, "message": "Không tìm thấy tag để cập nhật (hoặc đã bị xóa)"})
+			utils.ResponseError(c, http.StatusNotFound, "Không tìm thấy tag để cập nhật (hoặc đã bị xóa)!", err.Error())
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"status": http.StatusInternalServerError, "message": "Lỗi máy chủ: " + err.Error()})
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 		return
 	}
 
@@ -188,22 +170,11 @@ func UpdateTag(c *gin.Context) {
 	// XỬ LÝ RESPONSE BẰNG SWITCH
 	switch {
 	case err == nil:
-		c.JSON(http.StatusOK, gin.H{
-			"status":  http.StatusOK,
-			"message": "Cập nhật tag thành công",
-		})
+		utils.ResponseSuccess(c, http.StatusOK, "", nil, nil)
 	case errors.Is(err, mongo.ErrNoDocuments):
-		c.JSON(http.StatusNotFound, gin.H{
-			"status":  http.StatusNotFound,
-			"message": "Không tìm thấy tag (lỗi từ Update)",
-			"error":   err.Error(),
-		})
+		utils.ResponseError(c, http.StatusNotFound, "Không tìm thấy tag (lỗi từ Update)!", err.Error())
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  http.StatusInternalServerError,
-			"message": "Lỗi khi cập nhật tag: " + err.Error(),
-			"error":   err.Error(),
-		})
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 	}
 }
 
@@ -214,7 +185,7 @@ func SoftDeleteTag(c *gin.Context) {
 	tagIDStr := c.Param("id")
 	tagID, err := primitive.ObjectIDFromHex(tagIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": http.StatusBadRequest, "message": "ID tag không hợp lệ"})
+		utils.ResponseError(c, http.StatusBadRequest, "ID tag không hợp lệ!", err.Error())
 		return
 	}
 
@@ -243,22 +214,11 @@ func SoftDeleteTag(c *gin.Context) {
 	// Xử lý response
 	switch {
 	case err == nil:
-		c.JSON(http.StatusOK, gin.H{
-			"status":  http.StatusOK,
-			"message": "Đã xóa tag thành công",
-		})
+		utils.ResponseSuccess(c, http.StatusOK, "Đã xóa tag thành công.", nil, nil)
 	case errors.Is(err, mongo.ErrNoDocuments):
-		c.JSON(http.StatusNotFound, gin.H{
-			"status":  http.StatusNotFound,
-			"message": "Không tìm thấy tag để xóa (hoặc đã bị xóa từ trước)",
-			"error":   err.Error(),
-		})
+		utils.ResponseError(c, http.StatusNotFound, "Không tìm thấy tag để khôi phục (hoặc tag chưa bị xóa)!", err.Error())
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  http.StatusInternalServerError,
-			"message": "Lỗi hệ thống khi xóa tag",
-			"error":   err.Error(),
-		})
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 	}
 }
 
@@ -269,7 +229,7 @@ func RestoreTag(c *gin.Context) {
 	tagIDStr := c.Param("id")
 	tagID, err := primitive.ObjectIDFromHex(tagIDStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": http.StatusBadRequest, "message": "ID tag không hợp lệ"})
+		utils.ResponseError(c, http.StatusBadRequest, "ID tag không hợp lệ!", err.Error())
 		return
 	}
 
@@ -298,25 +258,13 @@ func RestoreTag(c *gin.Context) {
 
 	err = tagEntry.Update(filter, update)
 
-	// Xử lý response bằng switch
 	switch {
 	case err == nil:
-		c.JSON(http.StatusOK, gin.H{
-			"status":  http.StatusOK,
-			"message": "Đã khôi phục tag thành công",
-		})
+		utils.ResponseSuccess(c, http.StatusOK, "Đã khôi phục tag thành công.", nil, nil)
 	case errors.Is(err, mongo.ErrNoDocuments):
-		c.JSON(http.StatusNotFound, gin.H{
-			"status":  http.StatusNotFound,
-			"message": "Không tìm thấy tag để khôi phục (hoặc tag chưa bị xóa)",
-			"error":   err.Error(),
-		})
+		utils.ResponseError(c, http.StatusNotFound, "Không tìm thấy tag để khôi phục (hoặc tag chưa bị xóa).", err.Error())
 	default:
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  http.StatusInternalServerError,
-			"message": "Lỗi hệ thống khi khôi phục tag",
-			"error":   err.Error(),
-		})
+		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 	}
 }
 

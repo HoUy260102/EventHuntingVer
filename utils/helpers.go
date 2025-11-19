@@ -1,6 +1,9 @@
 package utils
 
 import (
+	"crypto/hmac"
+	"crypto/sha512"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"slices"
@@ -8,7 +11,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/google/uuid"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
@@ -59,12 +61,6 @@ func GenerateSlug(input string) string {
 	return finalSlug
 }
 
-func GenerateUUIDTransaction(prefix string) string {
-	id := strings.ToUpper(strings.ReplaceAll(uuid.New().String()[:8], "-", ""))
-	t := time.Now().Format("20060102")
-	return fmt.Sprintf("%s-%s-%s", prefix, t, id)
-}
-
 func ExtractUniqueIDs[T any](list []T, extract func(T) []primitive.ObjectID) []primitive.ObjectID {
 	exists := make(map[primitive.ObjectID]bool)
 
@@ -91,4 +87,14 @@ func CanModifyResource(ownerID primitive.ObjectID, accountID primitive.ObjectID,
 		}
 	}
 	return ownerID == accountID
+}
+
+func GenerateInvoiceNumber() string {
+	return fmt.Sprintf("INV-%s-%d", time.Now().Format("20060102"), time.Now().UnixNano()%10000)
+}
+
+func hmacSha512(secret string, data string) string {
+	h := hmac.New(sha512.New, []byte(secret))
+	h.Write([]byte(data))
+	return hex.EncodeToString(h.Sum(nil))
 }

@@ -170,3 +170,29 @@ func GetDefaultPagination(name string) (int, int) {
 	maxLength := target["default_max_length"].(int)
 	return length, maxLength
 }
+
+func GetVNPAYTmnCode() string {
+	vnPay := mpConfig["vn_pay"].(map[string]interface{})
+	return fmt.Sprintf("%v", vnPay["tmncode"])
+}
+
+func GetVNPAYHashSecret() string {
+	vnPay := mpConfig["vn_pay"].(map[string]interface{})
+	return fmt.Sprintf("%v", vnPay["hash_secret"])
+}
+
+func GetVNPAYUrl() string {
+	vnPay := mpConfig["vn_pay"].(map[string]interface{})
+	return fmt.Sprintf("%v", vnPay["url"])
+}
+
+func GetRegisExpirationMinutes() int {
+	jobs := mpConfig["jobs"].(map[string]interface{})
+	target := jobs["registration"].(map[string]interface{})
+	return target["expiration_minutes"].(int)
+}
+
+func GetMaxRetries() int {
+	jobs := mpConfig["jobs"].(map[string]interface{})
+	return jobs["max_retries"].(int)
+}
