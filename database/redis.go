@@ -3,6 +3,7 @@ package database
 import (
 	"EventHunting/configs"
 	"context"
+	"crypto/tls"
 	"log"
 
 	"github.com/redis/go-redis/v9"
@@ -22,6 +23,9 @@ func NewRedisClient() error {
 		Addr:     configs.GetRedisAddr(),
 		Password: configs.GetRedisPassword(),
 		DB:       configs.GetRedisDB(),
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
 	})
 
 	ctx := context.Background()
