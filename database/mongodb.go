@@ -4,11 +4,9 @@ import (
 	"EventHunting/configs"
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
-	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -19,10 +17,10 @@ type MongoDBConfig struct {
 }
 
 func NewMongoDBConfig() *MongoDBConfig {
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
+	//err := godotenv.Load()
+	//if err != nil {
+	//	log.Fatal("Error loading .env file")
+	//}
 	return &MongoDBConfig{
 		Name: configs.GetDatabaseName(),
 		URI:  configs.GetDatabaseURI(),
