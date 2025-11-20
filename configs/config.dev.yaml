@@ -1,0 +1,59 @@
+server:
+  port: ${SERVER_PORT}
+  domain: ${SERVER_DOMAIN}
+database:
+  uri: ${MONGODB_CONNECTION_URI}
+  name: ${MONGODB_CONNECTION_NAME}
+
+jwt:
+  secret_key: ${SECRET_KEY}
+  issuer: ${ISSUER}
+  jwt_access_token_expiration_time: 86400       # 1 ngày
+  jwt_refresh_token_expiration_time: 1296000    # 15 ngày
+  jwt_aprroved_token_expiration_time: 900       # 15 phút
+  jwt_verify_token_expiration_time: 900         # 15 phút
+  jwt_reset_token_expiration_time: 900          # 15 phút
+
+redis:
+  addr: ${REDIS_ADDR}
+  password: ""
+  db: 0
+
+smtp:
+  host: ${SMTP_HOST}
+  port: ${SMTP_PORT}
+
+app:
+  sender_email: ${SENDER_EMAIL}
+  app_password: ${APP_PASSWORD}
+
+google_oauth:
+  client_id: ${GOOGLE_CLIENT_ID}
+  client_secret: ${GOOGLE_CLIENT_SECRET}
+  redirect_url: ${GOOGLE_REDIRECT_URL}
+
+cloudinary:
+  cloud_name: ${CLOUD_NAME}
+  api_key: ${CLOUD_API_KEY}
+  api_secret: ${CLOUD_API_SECRET}
+
+session:
+  secret: ${SESSION_SECRET}
+
+pagination:
+  primary:
+    default_length: 12
+    default_max_length: 50
+  secondary:
+    default_length: 15
+    default_max_length: 100
+
+vn_pay:
+  tmncode: ${VNPAY_TMNCODE}
+  hash_secret: ${VNPAY_HASH_SECRET}
+  url: ${VNPAY_URL}
+
+jobs:
+  registration:
+    expiration_minutes: 17
+  max_retries : 3
