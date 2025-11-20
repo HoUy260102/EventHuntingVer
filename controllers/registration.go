@@ -335,6 +335,7 @@ func validateRegistrationRules(
 	}
 
 	//Kiểm tra thời hạn đăng ký
+	loc := time.FixedZone("Asia/Ho_Chi_Minh", 7*60*60)
 	now := time.Now()
 	if !eventEntry.EventTime.EndDate.IsZero() {
 
@@ -345,7 +346,7 @@ func validateRegistrationRules(
 				deadline = time.Date(
 					deadline.Year(), deadline.Month(), deadline.Day(),
 					parsedStart.Hour(), parsedStart.Minute(), 0, 0,
-					deadline.Location(),
+					loc,
 				)
 			}
 		}
