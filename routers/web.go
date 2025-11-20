@@ -102,11 +102,7 @@ func Register(router *gin.RouterGroup) {
 		eventRouter.GET("/:id/ticket_types", controllers.GetListTicketTypes)
 		eventRouter.POST("/:id/registration", middlewares.AuthorizeJWTMiddleware(), controllers.RegistrationEvent)
 	}
-	//Registration
-	//regisRouter := router.Group("registrations")
-	//{
-	//	regisRouter.POST("/:id/ticket/generate", middlewares.AuthorizeJWTMiddleware(), controllers.HandleCallbackVNPAY)
-	//}
+
 	//Comment
 	commentRouter := router.Group("comments")
 	{

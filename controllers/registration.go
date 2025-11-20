@@ -31,91 +31,6 @@ type VNPAYIPNResponse struct {
 }
 
 // Xử lý call back url thanh toán
-//func HandleCallbackVNPAY(c *gin.Context) {
-//	vnpParams := c.Request.URL.Query()
-//
-//	if err := utils.VerifyIPNChecksum(vnpParams); err != nil {
-//		log.Printf("ERROR: VNPAY IPN Checksum thất bại: %v", err)
-//		utils.ResponseError(c, http.StatusBadRequest, "Lỗi sai chữ ký khi call back url thanh toán!", err.Error())
-//		return
-//	}
-//
-//	vnp_ResponseCode := vnpParams.Get("vnp_ResponseCode")
-//	vnp_TxnRef := vnpParams.Get("vnp_TxnRef")
-//	vnp_Amount_str := vnpParams.Get("vnp_Amount")
-//	vnp_TxnRefObjectID, _ := primitive.ObjectIDFromHex(vnp_TxnRef)
-//
-//	if vnp_ResponseCode != "00" {
-//		log.Printf("WARN: VNPAY IPN: Giao dịch %s thất bại. Code: %s", vnp_TxnRef, vnp_ResponseCode)
-//		utils.ResponseError(c, http.StatusBadRequest, utils.ResponsePaymentMessage(vnp_ResponseCode), nil)
-//		return
-//	}
-//
-//	// Tìm Registration (đơn hàng) trong DB
-//	regisEntry := &collections.Registration{}
-//	regisFilter := bson.M{
-//		"_id":    vnp_TxnRefObjectID,
-//		"status": consts.RegistrationPending,
-//	}
-//
-//	err := regisEntry.First(nil, utils.GetFilter(regisFilter))
-//	if err != nil {
-//		if errors.Is(err, mongo.ErrNoDocuments) {
-//			log.Printf("ERROR: VNPAY IPN: Không tìm thấy TxnRef %s trong DB", vnp_TxnRef)
-//			utils.ResponseError(c, http.StatusBadRequest, "Không tìm thấy đơn hàng!", err.Error())
-//			return
-//		}
-//		log.Printf("ERROR: VNPAY IPN: Lỗi DB khi tìm TxnRef %s: %v", vnp_TxnRef, err)
-//		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
-//		return
-//	}
-//
-//	//Kiểm tra số tiền
-//	vnp_Amount, _ := strconv.ParseInt(vnp_Amount_str, 10, 64)
-//	if vnp_Amount != int64(regisEntry.TotalPrice*100) {
-//		log.Printf("ERROR: VNPAY IPN: Sai số tiền. TxnRef %s. VNPAY: %d, DB: %d", vnp_TxnRef, vnp_Amount, (regisEntry.TotalPrice * 100))
-//		utils.ResponseError(c, http.StatusBadRequest, "Số tiền thanh toán không hợp lệ!", nil)
-//		return
-//	}
-//
-//	// CẬP NHẬT TRẠNG THÁI "PAID"
-//	err = regisEntry.Update(nil,
-//		utils.GetFilter(regisFilter),
-//		bson.M{"$set": bson.M{"status": consts.RegistrationPaid}},
-//	)
-//
-//	if err != nil {
-//		log.Printf("ERROR: VNPAY IPN: Không thể update status 'paid' cho TxnRef %s: %v", vnp_TxnRef, err)
-//		utils.ResponseError(c, http.StatusBadRequest, "Lỗi do hệ thống!", err.Error())
-//		return
-//	}
-//
-//	// Gọi hàm gửi vé
-//	err = service.GenerateAndSendTickets(vnp_TxnRefObjectID)
-//	if err != nil {
-//		log.Printf("ERROR: VNPAY IPN: Xử lý đơn %s thành công, nhưng GỬI VÉ thất bại: %v", vnp_TxnRef, err)
-//		if errors.Is(err, consts.ErrRegistrationNotFound) {
-//			utils.ResponseError(c, http.StatusBadRequest, "Không tìm thấy đăng ký!", err.Error())
-//			return
-//		}
-//		if errors.Is(err, consts.ErrEventNotFound) {
-//			utils.ResponseError(c, http.StatusBadRequest, "Không tìm thấy sự kiện đăng ký!", err.Error())
-//			return
-//		}
-//		if errors.Is(err, consts.ErrAccountNotFound) {
-//			utils.ResponseError(c, http.StatusBadRequest, "Không tìm thấy tài khoản đăng ký!", err.Error())
-//			return
-//		}
-//		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
-//		return
-//	}
-//
-//	log.Printf("INFO: VNPAY IPN: Đã xử lý thành công đơn hàng %s", vnp_TxnRef)
-//	utils.ResponseSuccess(c, http.StatusOK, "", VNPAYIPNResponse{
-//		RspCode: "00",
-//		Message: "Confirm",
-//	}, nil)
-//}
 
 func HandleCallbackVNPAY(c *gin.Context) {
 	vnpParams := c.Request.URL.Query()
@@ -421,7 +336,6 @@ func validateRegistrationRules(
 
 	//Kiểm tra thời hạn đăng ký
 	now := time.Now()
-	fmt.Println("now -------> ", now)
 	if !eventEntry.EventTime.EndDate.IsZero() {
 
 		deadline := eventEntry.EventTime.EndDate
@@ -537,3 +451,89 @@ func validateRegistrationRules(
 
 	return validationErrors, lstTicketTypes, requestedTicketsMap, totalPrice, totalNewTickets
 }
+
+//func HandleCallbackVNPAY(c *gin.Context) {
+//	vnpParams := c.Request.URL.Query()
+//
+//	if err := utils.VerifyIPNChecksum(vnpParams); err != nil {
+//		log.Printf("ERROR: VNPAY IPN Checksum thất bại: %v", err)
+//		utils.ResponseError(c, http.StatusBadRequest, "Lỗi sai chữ ký khi call back url thanh toán!", err.Error())
+//		return
+//	}
+//
+//	vnp_ResponseCode := vnpParams.Get("vnp_ResponseCode")
+//	vnp_TxnRef := vnpParams.Get("vnp_TxnRef")
+//	vnp_Amount_str := vnpParams.Get("vnp_Amount")
+//	vnp_TxnRefObjectID, _ := primitive.ObjectIDFromHex(vnp_TxnRef)
+//
+//	if vnp_ResponseCode != "00" {
+//		log.Printf("WARN: VNPAY IPN: Giao dịch %s thất bại. Code: %s", vnp_TxnRef, vnp_ResponseCode)
+//		utils.ResponseError(c, http.StatusBadRequest, utils.ResponsePaymentMessage(vnp_ResponseCode), nil)
+//		return
+//	}
+//
+//	// Tìm Registration (đơn hàng) trong DB
+//	regisEntry := &collections.Registration{}
+//	regisFilter := bson.M{
+//		"_id":    vnp_TxnRefObjectID,
+//		"status": consts.RegistrationPending,
+//	}
+//
+//	err := regisEntry.First(nil, utils.GetFilter(regisFilter))
+//	if err != nil {
+//		if errors.Is(err, mongo.ErrNoDocuments) {
+//			log.Printf("ERROR: VNPAY IPN: Không tìm thấy TxnRef %s trong DB", vnp_TxnRef)
+//			utils.ResponseError(c, http.StatusBadRequest, "Không tìm thấy đơn hàng!", err.Error())
+//			return
+//		}
+//		log.Printf("ERROR: VNPAY IPN: Lỗi DB khi tìm TxnRef %s: %v", vnp_TxnRef, err)
+//		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+//		return
+//	}
+//
+//	//Kiểm tra số tiền
+//	vnp_Amount, _ := strconv.ParseInt(vnp_Amount_str, 10, 64)
+//	if vnp_Amount != int64(regisEntry.TotalPrice*100) {
+//		log.Printf("ERROR: VNPAY IPN: Sai số tiền. TxnRef %s. VNPAY: %d, DB: %d", vnp_TxnRef, vnp_Amount, (regisEntry.TotalPrice * 100))
+//		utils.ResponseError(c, http.StatusBadRequest, "Số tiền thanh toán không hợp lệ!", nil)
+//		return
+//	}
+//
+//	// CẬP NHẬT TRẠNG THÁI "PAID"
+//	err = regisEntry.Update(nil,
+//		utils.GetFilter(regisFilter),
+//		bson.M{"$set": bson.M{"status": consts.RegistrationPaid}},
+//	)
+//
+//	if err != nil {
+//		log.Printf("ERROR: VNPAY IPN: Không thể update status 'paid' cho TxnRef %s: %v", vnp_TxnRef, err)
+//		utils.ResponseError(c, http.StatusBadRequest, "Lỗi do hệ thống!", err.Error())
+//		return
+//	}
+//
+//	// Gọi hàm gửi vé
+//	err = service.GenerateAndSendTickets(vnp_TxnRefObjectID)
+//	if err != nil {
+//		log.Printf("ERROR: VNPAY IPN: Xử lý đơn %s thành công, nhưng GỬI VÉ thất bại: %v", vnp_TxnRef, err)
+//		if errors.Is(err, consts.ErrRegistrationNotFound) {
+//			utils.ResponseError(c, http.StatusBadRequest, "Không tìm thấy đăng ký!", err.Error())
+//			return
+//		}
+//		if errors.Is(err, consts.ErrEventNotFound) {
+//			utils.ResponseError(c, http.StatusBadRequest, "Không tìm thấy sự kiện đăng ký!", err.Error())
+//			return
+//		}
+//		if errors.Is(err, consts.ErrAccountNotFound) {
+//			utils.ResponseError(c, http.StatusBadRequest, "Không tìm thấy tài khoản đăng ký!", err.Error())
+//			return
+//		}
+//		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
+//		return
+//	}
+//
+//	log.Printf("INFO: VNPAY IPN: Đã xử lý thành công đơn hàng %s", vnp_TxnRef)
+//	utils.ResponseSuccess(c, http.StatusOK, "", VNPAYIPNResponse{
+//		RspCode: "00",
+//		Message: "Confirm",
+//	}, nil)
+//}

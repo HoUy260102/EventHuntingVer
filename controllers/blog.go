@@ -79,6 +79,13 @@ func CreateBlog(c *gin.Context) {
 		})
 		switch {
 		case err == nil:
+			if mediaEntry.Type != consts.MEDIA_IMAGE {
+				utils.ResponseError(c, http.StatusBadRequest, "", "Thumbnail phải là ảnh")
+				return
+			}
+			newBlog.ThumbnailUrl = mediaEntry.Url
+			newBlog.ThumbnailID = *req.ThumbnailID
+			mediaIDs = append(mediaIDs, *req.ThumbnailID)
 		case errors.Is(err, mongo.ErrNoDocuments):
 			utils.ResponseError(c, http.StatusBadRequest, "", fmt.Errorf("Không tìm thấy thumbnail: %v", err.Error()))
 			return
@@ -86,13 +93,6 @@ func CreateBlog(c *gin.Context) {
 			utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 			return
 		}
-		if mediaEntry.Type != consts.MEDIA_IMAGE {
-			utils.ResponseError(c, http.StatusBadRequest, "", "Thumbnail phải là ảnh")
-			return
-		}
-		newBlog.ThumbnailUrl = mediaEntry.Url
-		newBlog.ThumbnailID = *req.ThumbnailID
-		mediaIDs = append(mediaIDs, *req.ThumbnailID)
 	}
 
 	//Logic kiểm tra ảnh có tồn tại
@@ -172,7 +172,6 @@ func CreateBlog(c *gin.Context) {
 		return err
 	})
 
-	// Response cuối cùng dùng switch
 	switch {
 	case err == nil:
 		_ = newBlog.Preload(nil, "AccountFirst", "MediaFirst", "TagFirst")
@@ -250,16 +249,15 @@ func UpdateBlog(c *gin.Context) {
 		}
 	)
 	err = blogEntry.First(nil, blogFilter)
-	switch {
-	case err == nil:
-	case errors.Is(err, mongo.ErrNoDocuments):
-		c.JSON(http.StatusNotFound, dto.ApiResponse{
-			Status:  http.StatusNotFound,
-			Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
-			Error:   err.Error(),
-		})
-		return
-	default:
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			c.JSON(http.StatusNotFound, dto.ApiResponse{
+				Status:  http.StatusNotFound,
+				Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
+				Error:   err.Error(),
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
 			Message: "Lỗi từ hệ thống!",
@@ -310,22 +308,22 @@ func UpdateBlog(c *gin.Context) {
 			})
 			switch {
 			case err == nil:
+				if mediaEntry.Type != consts.MEDIA_IMAGE {
+					utils.ResponseError(c, http.StatusBadRequest, "", "Thumbnail phải là ảnh")
+					return
+				}
+				updateDoc["thumbnail_url"] = mediaEntry.Url
+				updateDoc["thumbnail_id"] = *req.ThumbnailID
+				mediaIdsToUpdate = append(mediaIdsToUpdate, newThumbnailID)
+				if !oldThumbnailID.IsZero() {
+					mediaIdsToDelete = append(mediaIdsToDelete, oldThumbnailID)
+				}
 			case errors.Is(err, mongo.ErrNoDocuments):
-				utils.ResponseError(c, http.StatusBadRequest, "", fmt.Errorf("Không tìm thấy thumbnail: %v", err.Error()))
+				utils.ResponseError(c, http.StatusBadRequest, "", fmt.Errorf("Không tìm thấy thumbnail: %v", err.Error()).Error())
 				return
 			default:
 				utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 				return
-			}
-			if mediaEntry.Type != consts.MEDIA_IMAGE {
-				utils.ResponseError(c, http.StatusBadRequest, "", "Thumbnail phải là ảnh")
-				return
-			}
-			updateDoc["thumbnail_url"] = mediaEntry.Url
-			updateDoc["thumbnail_id"] = *req.ThumbnailID
-			mediaIdsToUpdate = append(mediaIdsToUpdate, newThumbnailID)
-			if !oldThumbnailID.IsZero() {
-				mediaIdsToDelete = append(mediaIdsToDelete, oldThumbnailID)
 			}
 		}
 	}
@@ -469,17 +467,15 @@ func SoftDeleteBlog(c *gin.Context) {
 	// Kiểm tra xem blog đó có tồn tại không
 	blogFilter := bson.M{"_id": blogID, "deleted_at": bson.M{"$exists": false}}
 	err = blogEntry.First(nil, blogFilter)
-	switch {
-	case err == nil:
-		// Blog tồn tại, không làm gì cả
-	case errors.Is(err, mongo.ErrNoDocuments):
-		c.JSON(http.StatusNotFound, dto.ApiResponse{
-			Status:  http.StatusNotFound,
-			Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
-			Error:   err.Error(),
-		})
-		return
-	default:
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			c.JSON(http.StatusNotFound, dto.ApiResponse{
+				Status:  http.StatusNotFound,
+				Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
+				Error:   err.Error(),
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
 			Message: "Lỗi từ hệ thống!",
@@ -621,17 +617,15 @@ func RestoreBlog(c *gin.Context) {
 	)
 
 	err = blogEntry.First(nil, blogFilter)
-	switch {
-	case err == nil:
-		// Blog tồn tại, không làm gì cả
-	case errors.Is(err, mongo.ErrNoDocuments):
-		c.JSON(http.StatusNotFound, dto.ApiResponse{
-			Status:  http.StatusNotFound,
-			Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
-			Error:   err.Error(),
-		})
-		return
-	default:
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			c.JSON(http.StatusNotFound, dto.ApiResponse{
+				Status:  http.StatusNotFound,
+				Message: "Không tìm thấy blog hoặc blog đã bị xóa!",
+				Error:   err.Error(),
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
 			Message: "Lỗi từ hệ thống!",

@@ -35,6 +35,7 @@ type Account struct {
 	LockUtil    time.Time         `bson:"lock_util,omitempty" json:"lock_util,omitempty"`
 	LockMessage string            `bson:"lock_message,omitempty" json:"lock_message,omitempty"`
 	LockReason  consts.LockReason `bson:"lock_reason,omitempty" json:"lock_reason,omitempty"`
+
 	// --- Xác minh tài khoản ---
 	IsVerified        bool      `bson:"is_verified" json:"is_verified"`
 	VerifiedAt        time.Time `bson:"verified_at,omitempty" json:"verified_at,omitempty"`

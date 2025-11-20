@@ -101,16 +101,16 @@ func CreateComment(c *gin.Context) {
 			"_id":        req.ParentID,
 			"deleted_at": bson.M{"$exists": false},
 		}
-		switch err := commentEntry.First(filter); {
-		case err == nil:
-		case errors.Is(err, mongo.ErrNoDocuments):
-			c.JSON(http.StatusNotFound, dto.ApiResponse{
-				Status:  http.StatusNotFound,
-				Message: "Comment cha không tồn tại hoặc đã bị xóa!",
-				Error:   err.Error(),
-			})
-			return
-		default:
+		err = commentEntry.First(filter)
+		if err != nil {
+			if errors.Is(err, mongo.ErrNoDocuments) {
+				c.JSON(http.StatusNotFound, dto.ApiResponse{
+					Status:  http.StatusNotFound,
+					Message: "Comment cha không tồn tại hoặc đã bị xóa!",
+					Error:   err.Error(),
+				})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 				Status:  http.StatusInternalServerError,
 				Message: "Lỗi hệ thống khi kiểm tra comment cha!",
@@ -232,7 +232,6 @@ func CreateComment(c *gin.Context) {
 		return err
 	})
 
-	// XỬ LÝ KẾT QUẢ TRẢ VỀ
 	switch {
 	case err == nil:
 		err = newComment.Preload(nil, "AccountFirst", "MediaFirst")
@@ -433,7 +432,6 @@ func UpdateComment(c *gin.Context) {
 		return err
 	})
 
-	// Response cuối cùng dùng switch
 	switch {
 	case err == nil:
 		c.JSON(http.StatusOK, dto.ApiResponse{
@@ -490,15 +488,15 @@ func SoftDeleteComment(c *gin.Context) {
 	}
 
 	// Lấy comment
-	switch err = commentEntry.First(filterFind); {
-	case err == nil:
-	case errors.Is(err, mongo.ErrNoDocuments):
-		c.JSON(http.StatusNotFound, dto.ApiResponse{
-			Status:  http.StatusNotFound,
-			Message: "Bình luận không tồn tại hoặc đã bị xóa!",
-		})
-		return
-	default:
+	err = commentEntry.First(filterFind)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			c.JSON(http.StatusNotFound, dto.ApiResponse{
+				Status:  http.StatusNotFound,
+				Message: "Bình luận không tồn tại hoặc đã bị xóa!",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
 			Message: "Lỗi hệ thống khi tìm bình luận!",
@@ -564,7 +562,6 @@ func SoftDeleteComment(c *gin.Context) {
 			}(parentIDToUpdate)
 		}
 
-		// Trả về JSON cho người dùng *NGAY LẬP TỨC*
 		c.JSON(http.StatusOK, dto.ApiResponse{
 			Status:  http.StatusOK,
 			Message: "Xóa mềm bình luận và các trả lời thành công.",
@@ -590,7 +587,6 @@ func RestoreComment(c *gin.Context) {
 	}
 
 	//Lấy id người restore
-	// LẤY ID NGƯỜI XÓA
 	restorerObjectId, ok := utils.GetAccountID(c)
 	if !ok {
 		return
@@ -607,15 +603,15 @@ func RestoreComment(c *gin.Context) {
 		"deleted_at": bson.M{"$exists": true},
 	}
 	// Gán dữ liệu tìm được vào commentEntry
-	switch err = commentEntry.First(filterFind); {
-	case err == nil:
-	case errors.Is(err, mongo.ErrNoDocuments):
-		c.JSON(http.StatusNotFound, dto.ApiResponse{
-			Status:  http.StatusNotFound,
-			Message: "Bình luận không tồn tại hoặc đã bị xóa!",
-		})
-		return
-	default:
+	err = commentEntry.First(filterFind)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			c.JSON(http.StatusNotFound, dto.ApiResponse{
+				Status:  http.StatusNotFound,
+				Message: "Bình luận không tồn tại hoặc đã bị xóa!",
+			})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
 			Message: "Lỗi hệ thống khi tìm bình luận!",
@@ -673,7 +669,7 @@ func RestoreComment(c *gin.Context) {
 				filterParent := bson.M{"_id": parentID, "deleted_at": bson.M{
 					"$exists": false,
 				}}
-				updateParent := bson.M{"$inc": bson.M{"reply_count": 1}} // Tăng 1
+				updateParent := bson.M{"$inc": bson.M{"reply_count": 1}}
 
 				for i := 0; i < maxRetry; i++ {
 					retryErr := commentParentEntry.Update(nil, filterParent, updateParent)

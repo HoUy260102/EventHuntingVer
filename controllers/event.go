@@ -80,6 +80,12 @@ func CreateEvent(c *gin.Context) {
 		})
 		switch {
 		case err == nil:
+			if mediaEntry.Type != consts.MEDIA_IMAGE {
+				utils.ResponseError(c, http.StatusBadRequest, "", "Thumbnail phải là ảnh")
+				return
+			}
+			newEvent.ThumbnailUrl = mediaEntry.Url
+			newEvent.ThumbnailId = *req.ThumbnailId
 		case errors.Is(err, mongo.ErrNoDocuments):
 			utils.ResponseError(c, http.StatusBadRequest, "", fmt.Errorf("Không tìm thấy thumbnail: %v", err.Error()))
 			return
@@ -87,12 +93,6 @@ func CreateEvent(c *gin.Context) {
 			utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 			return
 		}
-		if mediaEntry.Type != consts.MEDIA_IMAGE {
-			utils.ResponseError(c, http.StatusBadRequest, "", "Thumbnail phải là ảnh")
-			return
-		}
-		newEvent.ThumbnailUrl = mediaEntry.Url
-		newEvent.ThumbnailId = *req.ThumbnailId
 	}
 
 	//Logic kiểm tra ảnh
@@ -135,12 +135,11 @@ func CreateEvent(c *gin.Context) {
 		"_id": req.ProvinceID,
 	}
 	err = provinceEntry.First(nil, provinceFilter)
-	switch {
-	case err == nil:
-	case errors.Is(err, mongo.ErrNoDocuments):
-		utils.ResponseError(c, http.StatusBadRequest, "Lỗi do không tìm thấy province!", err.Error())
-		return
-	default:
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			utils.ResponseError(c, http.StatusBadRequest, "Lỗi do không tìm thấy province!", err.Error())
+			return
+		}
 		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi do hệ thống!", err.Error())
 		return
 	}
@@ -248,11 +247,11 @@ func UpdateEvent(c *gin.Context) {
 	// Lấy sự kiện hiện tại để kiểm tra quyền
 	eventEntry := &collections.Event{}
 	err = eventEntry.First(nil, bson.M{"_id": eventID})
-	switch {
-	case errors.Is(err, mongo.ErrNoDocuments):
-		utils.ResponseError(c, http.StatusNotFound, "", "Không tìm thấy sự kiện")
-		return
-	case err != nil:
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			utils.ResponseError(c, http.StatusNotFound, "", "Không tìm thấy sự kiện")
+			return
+		}
 		utils.ResponseError(c, http.StatusInternalServerError, "Lỗi hệ thống khi tìm sự kiện!", err.Error())
 		return
 	}
