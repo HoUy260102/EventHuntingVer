@@ -13,6 +13,9 @@ func Register(router *gin.RouterGroup) {
 	{
 		authRouter.POST("/login", controllers.Login)
 		authRouter.POST("/logout", controllers.Logout)
+		authRouter.POST("/signup", controllers.SignUpForUserAccount)
+		authRouter.POST("/signup/resend", controllers.ResendConfirmSignUp)
+		authRouter.GET("/signup/confirm", controllers.ConfirmSignUp)
 		authRouter.POST("renew-access-token", controllers.RenewAccessToken)
 		authRouter.GET("/:provider", controllers.BeginGoogleAuth)
 		authRouter.GET("/:provider/callback", controllers.OAuthCallback)
@@ -101,6 +104,7 @@ func Register(router *gin.RouterGroup) {
 		eventRouter.GET("/search", controllers.GetListEvents)
 		eventRouter.GET("/:id/ticket_types", controllers.GetListTicketTypes)
 		eventRouter.POST("/:id/registration", middlewares.AuthorizeJWTMiddleware(), controllers.RegistrationEvent)
+		eventRouter.GET("/:id/comments", controllers.GetCommentFromEvent)
 	}
 
 	//Comment

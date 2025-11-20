@@ -44,7 +44,7 @@ func CreateAccount(c *gin.Context) {
 	}
 
 	// Validate dữ liệu đã bind
-	validationErrors := dto.ValidateCreateAccountRequest(createData)
+	validationErrors := utils.ValidateCreateAccountRequest(createData)
 	if len(validationErrors) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  http.StatusBadRequest,
@@ -231,7 +231,7 @@ func UpdateAccount(c *gin.Context) {
 	}
 
 	// Validate request
-	validationErrors := dto.ValidateUpdateAccountReq(req)
+	validationErrors := utils.ValidateUpdateAccountReq(req)
 	if len(validationErrors) > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"status":  http.StatusBadRequest,

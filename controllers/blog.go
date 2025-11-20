@@ -873,13 +873,13 @@ func GetCommentFromBlog(c *gin.Context) {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			c.JSON(http.StatusOK, dto.ApiResponse{
 				Status:  http.StatusOK,
-				Message: "Không tìm thấy replies nào.",
+				Message: "Không tìm thấy comments nào.",
 			})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
 			Status:  http.StatusInternalServerError,
-			Message: "Lỗi hệ thống khi lấy replies!",
+			Message: "Lỗi hệ thống khi lấy comments!",
 			Error:   err.Error(),
 		})
 		return

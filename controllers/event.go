@@ -501,6 +501,103 @@ func GetEvent(c *gin.Context) {
 	}
 }
 
+func GetCommentFromEvent(c *gin.Context) {
+	var (
+		commentEntry = &collections.Comment{}
+		lastID       primitive.ObjectID
+		err          error
+	)
+
+	pagination := dto.GetPagination(c, "primary")
+	if pagination.LastId == "" {
+		lastID = primitive.NilObjectID
+	} else {
+		lastID, err = primitive.ObjectIDFromHex(pagination.LastId)
+		if err != nil {
+			utils.ResponseError(c, http.StatusBadRequest, "", nil)
+			return
+		}
+	}
+
+	eventIDParam := c.Param("id")
+	eventID, err := primitive.ObjectIDFromHex(eventIDParam)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, dto.ApiResponse{
+			Status:  http.StatusBadRequest,
+			Message: "Event ID không hợp lệ!",
+		})
+		return
+	}
+
+	filter := bson.M{
+		"document_id": eventID,
+		"parent_id":   bson.M{"$exists": false},
+		"deleted_at":  bson.M{"$exists": false},
+	}
+
+	if !lastID.IsZero() {
+		filter["_id"] = bson.M{"$gt": lastID}
+	}
+
+	findOptions := options.Find()
+	findOptions.SetSort(bson.D{{"_id", 1}})
+	findOptions.SetLimit(int64(pagination.Length) + 1)
+
+	// Thực thi truy vấn
+	comments, err := commentEntry.Find(filter, findOptions)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			c.JSON(http.StatusOK, dto.ApiResponse{
+				Status:  http.StatusOK,
+				Message: "Không tìm thấy comments nào.",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi hệ thống!",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	if len(comments) == 0 {
+		utils.ResponseError(c, http.StatusNotFound, "Không tìm thấy comment của event!", nil)
+		return
+	}
+
+	//Xử lý preload
+	err = commentEntry.Preload(comments, "AccountFind", "MediaFind")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, dto.ApiResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Lỗi do hệ thống!",
+			Error:   err.Error(),
+		})
+		return
+	}
+
+	commentsRes := make([]bson.M, 0)
+	for _, cmt := range comments {
+		commentsRes = append(commentsRes, utils.PrettyJSON(cmt.ParseEntry()))
+	}
+
+	pagination.TotalDocs = len(commentsRes)
+
+	if len(commentsRes) > pagination.Length {
+		commentsRes = commentsRes[:pagination.Length]
+	}
+
+	if len(commentsRes) > 0 {
+		pagination.LastId = comments[len(commentsRes)-1].ID.Hex()
+	}
+	// Xử lý kết quả cho hasMore
+	pagination.BuildPagination()
+
+	// Trả về kết quả
+	utils.ResponseSuccess(c, http.StatusOK, "", commentsRes, &pagination)
+}
+
 func GetListEvents(c *gin.Context) {
 	var (
 		eventEntry = &collections.Event{}

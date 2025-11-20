@@ -270,7 +270,7 @@ func RenewAccessToken(c *gin.Context) {
 	switch {
 	case err == nil:
 		if sessionEntry.IsRevoked {
-			utils.ResponseError(c, http.StatusUnauthorized, "Token này đã được thu hồi!", err.Error())
+			utils.ResponseError(c, http.StatusUnauthorized, "Token này đã được thu hồi!", nil)
 			return
 		}
 	case err == mongo.ErrNoDocuments:
@@ -468,6 +468,397 @@ func OAuthCallback(c *gin.Context) {
 			"refresh_token":            refreshToken,
 			"access_token_expired_at":  accessTokenClaims.ExpiresAt.Time,
 			"refresh_token_expired_at": refreshTokenClaims.ExpiresAt.Time,
+		},
+	})
+}
+
+func SignUpForUserAccount(c *gin.Context) {
+	// Bind và Validate
+	var (
+		signUpRequest dto.CreateUserRequest
+		accountEntry  = collections.Account{}
+		RoleEntry     = collections.Role{}
+		err           error
+	)
+	if err := c.ShouldBindJSON(&signUpRequest); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": "Dữ liệu không hợp lệ: " + err.Error(),
+		})
+		return
+	}
+
+	if errs := utils.ValidateCreateUser(signUpRequest); len(errs) > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": errs,
+		})
+		return
+	}
+
+	// Kiểm tra sự tồn tại của Email (Logic rõ ràng hơn)
+	err = accountEntry.First(bson.M{
+		"email": signUpRequest.Email,
+	})
+
+	if err == nil {
+		// Tìm thấy tài khoản (err == nil)
+		if accountEntry.IsVerified {
+			c.JSON(http.StatusBadRequest, gin.H{"status": http.StatusBadRequest, "message": "Email này đã tồn tại"})
+			return
+		}
+		// Nếu tìm thấy nhưng chưa xác thực
+		c.JSON(http.StatusBadRequest, gin.H{"status": http.StatusBadRequest, "message": "Email này đã được đăng ký nhưng chưa xác nhận"})
+		return
+	}
+
+	if !errors.Is(err, mongo.ErrNoDocuments) {
+		// Đây là một lỗi CSDL thực sự (vd: mất kết nối), không phải "không tìm thấy"
+		c.JSON(http.StatusInternalServerError, gin.H{"status": http.StatusInternalServerError, "message": "Lỗi máy chủ khi kiểm tra email: " + err.Error()})
+		return
+	}
+
+	// Lấy vai trò "User"
+	err = RoleEntry.First(bson.M{"name": "User"})
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": http.StatusInternalServerError, "message": "Lỗi cấu hình hệ thống."})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": http.StatusInternalServerError, "message": "Lỗi máy chủ khi tìm vai trò: " + err.Error()})
+		}
+		return
+	}
+
+	// Băm mật khẩu
+	hashPassword, err := utils.HashPassword(signUpRequest.Password)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": http.StatusInternalServerError, "message": "Không thể tạo mật khẩu: " + err.Error()})
+		return
+	}
+
+	// Chuẩn bị dữ liệu tài khoản
+	signUpId := primitive.NewObjectID()
+
+	verifySignUpToken, _, err := utils.GenerateToken(signUpId.Hex(), signUpRequest.Email, []string{"User"}, configs.GetJWTVerifyExp(), "verify") // 900s = 15 phút
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": http.StatusInternalServerError, "message": "Không thể tạo token xác thực: " + err.Error()})
+		return
+	}
+
+	signUpAccount := collections.Account{
+		ID:                signUpId,
+		Name:              signUpRequest.Name,
+		Email:             signUpRequest.Email,
+		Password:          hashPassword,
+		RoleId:            RoleEntry.Id,
+		CreatedAt:         time.Now(),
+		CreatedBy:         signUpId,
+		IsVerified:        false,
+		VerifySignUpToken: verifySignUpToken,
+	}
+
+	// Gán các trường tùy chọn
+	if signUpRequest.Phone != nil {
+		signUpAccount.Phone = *signUpRequest.Phone
+	}
+
+	if signUpRequest.UserInfo != nil {
+		signUpAccount.UserInfo = &collections.User{}
+		if signUpRequest.UserInfo.Dob != nil {
+			signUpAccount.UserInfo.Dob = *signUpRequest.UserInfo.Dob
+		}
+		if signUpRequest.UserInfo.IsMale != nil {
+			signUpAccount.UserInfo.IsMale = *signUpRequest.UserInfo.IsMale
+		}
+	}
+
+	go func() {
+		content := fmt.Sprintf(`
+			<h2>Chào mừng bạn đến với Event App 🎉</h2>
+			<p>Cảm ơn bạn đã đăng ký tài khoản. Vui lòng xác minh email của bạn bằng cách nhấn vào nút bên dưới:</p>
+			<p>
+				<a href="http://localhost:8080/api/v1/auth/signup/confirm?token=%s"
+					style="background-color:#4CAF50;color:white;padding:10px 20px;text-decoration:none;border-radius:6px;">
+					Xác minh tài khoản
+				</a>
+			</p>
+			<p>Nếu bạn không yêu cầu tạo tài khoản, hãy bỏ qua email này.</p>
+			<p>Trân trọng,<br>Đội ngũ Event App</p>
+		`, verifySignUpToken)
+
+		const maxRetries = 3
+		var sendErr error
+		emailService := utils.NewEmailService()
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			sendErr = emailService.SendEmail(utils.EmailPayload{
+				To:       []string{signUpRequest.Email},
+				HTMLBody: content,
+				Subject:  "Xác thực đăng ký tài khoản",
+			})
+
+			if sendErr == nil {
+				log.Printf("Gửi email xác thực thành công đến %s", signUpRequest.Email)
+				break
+			}
+
+			log.Printf("Lần gửi thứ %d thất bại: %v", attempt, sendErr)
+			time.Sleep(2 * time.Second) // chờ 2s rồi thử lại
+		}
+
+		if sendErr != nil {
+			log.Printf("Gửi email xác thực thất bại sau %d lần: %v", maxRetries, sendErr)
+		}
+	}()
+
+	// Chèn vào CSDL
+	err = signUpAccount.Create()
+	if err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			c.JSON(http.StatusBadRequest, gin.H{"status": http.StatusBadRequest, "message": "Email này đã tồn tại."})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, bson.M{
+			"status":  http.StatusInternalServerError,
+			"message": "Lỗi máy chủ khi tạo tài khoản: " + err.Error(),
+		})
+		return
+	}
+
+	// Trả về thành công
+	c.JSON(http.StatusOK, gin.H{
+		"status":  http.StatusOK,
+		"message": "Đăng ký thành công. Hãy kiểm tra email để xác nhận tài khoản.",
+		"data": bson.M{
+			"verify_sign_up_token": verifySignUpToken,
+		},
+	})
+}
+
+func ConfirmSignUp(c *gin.Context) {
+	var (
+		verifySignUpToken string
+		accountEntry      = &collections.Account{}
+		roleEntry         = &collections.Role{}
+		err               error
+	)
+	verifySignUpToken = c.Query("token")
+	verifyTokenClaims, err := utils.ExtractCustomClaims(verifySignUpToken)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  http.StatusInternalServerError,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	if verifyTokenClaims.Type != "verify" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": "Token này không phải type verify",
+		})
+		return
+	}
+
+	err = accountEntry.First(bson.M{
+		"verify_sign_up_token": verifySignUpToken,
+	})
+
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  http.StatusBadRequest,
+				"message": "Không tìm thấy token hoặc token này đã được dùng",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  http.StatusInternalServerError,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	if accountEntry.IsVerified == true {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": "Tài khoản này đã xác thực",
+		})
+		return
+	}
+
+	filter := bson.M{"_id": accountEntry.ID}
+	update := bson.M{
+		"$set": bson.M{
+			"is_verified": true,
+			"updated_at":  time.Now(),
+			"updated_by":  accountEntry.ID,
+			"verified_at": time.Now(),
+		},
+		"$unset": bson.M{
+			"verify_sign_up_token": "",
+		},
+	}
+	roleId := accountEntry.RoleId
+	_ = roleEntry.First(bson.M{
+		"_id": roleId,
+	})
+
+	setMap, ok := update["$set"].(bson.M)
+	if !ok {
+		setMap = bson.M{}
+		update["$set"] = setMap
+	}
+
+	if roleEntry.Name == "User" {
+		setMap["is_active"] = true
+	}
+
+	err = accountEntry.Update(filter, update)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  http.StatusInternalServerError,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  http.StatusOK,
+		"message": "Đăng ký tài khoản thành công",
+	})
+}
+
+func ResendConfirmSignUp(c *gin.Context) {
+	var resendConfirmSignUp struct {
+		Email string `json:"email"`
+	}
+	var (
+		roles        []string
+		accountEntry = &collections.Account{}
+		roleEntry    = &collections.Role{}
+	)
+
+	if err := c.ShouldBindJSON(&resendConfirmSignUp); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	checkExisted := accountEntry.First(bson.M{
+		"email": resendConfirmSignUp.Email,
+	})
+
+	if checkExisted != nil {
+		if errors.Is(checkExisted, mongo.ErrNoDocuments) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  http.StatusBadRequest,
+				"message": "Không tìm thấy tài khoản",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  http.StatusInternalServerError,
+			"message": checkExisted.Error(),
+		})
+		return
+	}
+
+	if accountEntry.IsVerified == true {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"status":  http.StatusBadRequest,
+			"message": "Tài khoản này đã được đăng ký",
+		})
+		return
+	}
+
+	checkExisted = roleEntry.First(bson.M{
+		"_id": accountEntry.RoleId,
+	})
+
+	if checkExisted != nil {
+		if errors.Is(checkExisted, mongo.ErrNoDocuments) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"status":  http.StatusBadRequest,
+				"message": "Không tìm thấy role",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  http.StatusInternalServerError,
+			"message": checkExisted.Error(),
+		})
+		return
+	}
+	roles = append(roles, accountEntry.Name)
+
+	verifySignUpToken, _, err := utils.GenerateToken(accountEntry.ID.Hex(), accountEntry.Email, roles, configs.GetJWTVerifyExp(), "verify")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, bson.M{
+			"status":  http.StatusInternalServerError,
+			"message": err.Error(),
+		})
+		return
+	}
+	go func() {
+		content := fmt.Sprintf(`
+			<h2>Chào mừng bạn đến với Event App 🎉</h2>
+			<p>Cảm ơn bạn đã đăng ký tài khoản. Vui lòng xác minh email của bạn bằng cách nhấn vào nút bên dưới:</p>
+			<p>
+				<a href="http://localhost:8080/api/v1/auth/signup/confirm?token=%s"
+					style="background-color:#4CAF50;color:white;padding:10px 20px;text-decoration:none;border-radius:6px;">
+					Xác minh tài khoản
+				</a>
+			</p>
+			<p>Nếu bạn không yêu cầu tạo tài khoản, hãy bỏ qua email này.</p>
+			<p>Trân trọng,<br>Đội ngũ Event App</p>
+		`, verifySignUpToken)
+
+		const maxRetries = 3
+		var sendErr error
+		emailService := utils.NewEmailService()
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			sendErr = emailService.SendEmail(utils.EmailPayload{
+				To:       []string{resendConfirmSignUp.Email},
+				HTMLBody: content,
+				Subject:  "Xác thực đăng ký tài khoản",
+			})
+			if sendErr == nil {
+				log.Printf("Gửi email xác thực thành công đến %s", accountEntry.Email)
+				break
+			}
+
+			log.Printf("Lần gửi thứ %d thất bại: %v", attempt, sendErr)
+			time.Sleep(2 * time.Second) // chờ 2s rồi thử lại
+		}
+
+		if sendErr != nil {
+			log.Printf("Gửi email xác thực thất bại sau %d lần: %v", maxRetries, sendErr)
+		}
+	}()
+
+	err = accountEntry.Update(bson.M{
+		"email": resendConfirmSignUp.Email,
+	}, bson.M{
+		"$set": bson.M{
+			"verify_sign_up_token": verifySignUpToken,
+		},
+	})
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, bson.M{
+			"status":  http.StatusInternalServerError,
+			"message": err.Error(),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":  http.StatusOK,
+		"message": "Thành công",
+		"data": bson.M{
+			"verify_sign_up_token": verifySignUpToken,
 		},
 	})
 }

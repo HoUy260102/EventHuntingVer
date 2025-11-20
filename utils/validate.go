@@ -41,65 +41,8 @@ func HandlerValidation(err error) string {
 }
 
 // Account
-func ValidateUpdate(data dto.UpdateAccountReq) []string {
-	var validationErrors []string
-
-	// Validate Name (cấp ngoài cùng)
-	if data.Name != nil {
-		if strings.TrimSpace(*data.Name) == "" {
-			validationErrors = append(validationErrors, "tên (name) không được để trống")
-		}
-	}
-
-	// Validate Phone (cấp ngoài cùng)
-	if data.Phone != nil {
-		if !vietnamPhoneRegex.MatchString(*data.Phone) {
-			validationErrors = append(validationErrors, "số điện thoại (phone) không đúng định dạng Việt Nam")
-		}
-	}
-
-	// Validate UserInfo (cấp lồng nhau)
-	if data.UserInfo != nil {
-		// Chỉ validate các trường con không-nil bên trong UserInfo
-
-		if data.UserInfo.Dob != nil {
-			if data.UserInfo.Dob.IsZero() {
-				validationErrors = append(validationErrors, "ngày sinh (dob) không được để trống")
-			} else if data.UserInfo.Dob.After(time.Now()) {
-				validationErrors = append(validationErrors, "ngày sinh (dob) không được ở tương lai")
-			}
-		}
-
-	}
-
-	// Validate OrganizerInfo (cấp lồng nhau)
-	if data.OrganizerInfo != nil {
-		// Chỉ validate các trường con không-nil bên trong OrganizerInfo
-
-		if data.OrganizerInfo.ContactName != nil {
-			if strings.TrimSpace(*data.OrganizerInfo.ContactName) == "" {
-				validationErrors = append(validationErrors, "tên liên hệ (contact_name) của nhà tổ chức không được để trống")
-			}
-		}
-
-		if data.OrganizerInfo.WebsiteUrl != nil {
-			// Cho phép gửi lên string rỗng "" (để xóa url)
-			// Nhưng nếu gửi lên string có nội dung, thì phải hợp lệ
-			if *data.OrganizerInfo.WebsiteUrl != "" {
-				_, err := url.ParseRequestURI(*data.OrganizerInfo.WebsiteUrl)
-				if err != nil {
-					validationErrors = append(validationErrors, "đường dẫn website (website_url) không hợp lệ")
-				}
-			}
-		}
-
-		// data.OrganizerInfo.Decription (*string) không có logic validate cụ thể
-	}
-
-	return validationErrors
-}
-
-func ValidateCreate(data dto.CreateAccount) []string {
+// Validate cho CreateAccountRequest
+func ValidateCreateAccountRequest(data dto.CreateAccount) []string {
 	var validationErrors []string
 
 	// --- 1. Validate các trường BẮT BUỘC ---
@@ -123,14 +66,20 @@ func ValidateCreate(data dto.CreateAccount) []string {
 		validationErrors = append(validationErrors, "vai trò (role_id) là bắt buộc")
 	}
 
-	// --- 2. Validate các trường TÙY CHỌN (Nếu có) ---
-
 	// Validate Phone
 	if !vietnamPhoneRegex.MatchString(data.Phone) {
 		validationErrors = append(validationErrors, "số điện thoại (phone) không đúng định dạng Việt Nam")
 	}
+	// --- 2. Validate các trường TÙY CHỌN (Nếu có) ---
+
+	//Validate địa chỉ
+	if data.Address != nil {
+		if strings.TrimSpace(*data.Address) != "" {
+			validationErrors = append(validationErrors, "địa chỉ (address) không nên để trống")
+		}
+	}
+
 	// Validate UserInfo
-	// Giả định: Nếu gửi UserInfo, thì Dob là bắt buộc
 	if data.UserInfo != nil {
 		if data.UserInfo.Dob != nil {
 			if data.UserInfo.Dob.IsZero() {
@@ -143,7 +92,6 @@ func ValidateCreate(data dto.CreateAccount) []string {
 	}
 
 	// Validate OrganizerInfo
-	// Giả định: Nếu gửi OrganizerInfo, thì ContactName là bắt buộc
 	if data.OrganizerInfo != nil {
 		if data.OrganizerInfo.ContactName != nil && strings.TrimSpace(*data.OrganizerInfo.ContactName) == "" {
 			validationErrors = append(validationErrors, "tên liên hệ (contact_name) là bắt buộc (khi cung cấp OrganizerInfo)")
@@ -155,6 +103,71 @@ func ValidateCreate(data dto.CreateAccount) []string {
 				validationErrors = append(validationErrors, "đường dẫn website (website_url) không hợp lệ")
 			}
 		}
+	}
+
+	return validationErrors
+}
+
+// Validate cho updateAccountRequest
+func ValidateUpdateAccountReq(data dto.UpdateAccountReq) []string {
+	var validationErrors []string
+
+	// Validate Name
+	if data.Name != nil {
+		if strings.TrimSpace(*data.Name) == "" {
+			validationErrors = append(validationErrors, "tên (name) không được để trống")
+		}
+	}
+
+	// Validate Phone
+	if data.Phone != nil {
+		if !vietnamPhoneRegex.MatchString(*data.Phone) {
+			validationErrors = append(validationErrors, "số điện thoại (phone) không đúng định dạng Việt Nam")
+		}
+	}
+
+	// Validate Address
+	if data.Address != nil {
+		if strings.TrimSpace(*data.Address) == "" {
+			validationErrors = append(validationErrors, "địa chỉ (address) không được để trống")
+		}
+	}
+
+	// Validate UserInfo
+	if data.UserInfo != nil {
+		// Chỉ validate các trường con không-nil bên trong UserInfo
+
+		if data.UserInfo.Dob != nil {
+			if data.UserInfo.Dob.IsZero() {
+				validationErrors = append(validationErrors, "ngày sinh (dob) không được để trống")
+			} else if data.UserInfo.Dob.After(time.Now()) {
+				validationErrors = append(validationErrors, "ngày sinh (dob) không được ở tương lai")
+			}
+		}
+
+	}
+
+	// Validate OrganizerInfo
+	if data.OrganizerInfo != nil {
+		// Chỉ validate các trường con không-nil bên trong OrganizerInfo
+
+		if data.OrganizerInfo.ContactName != nil {
+			if strings.TrimSpace(*data.OrganizerInfo.ContactName) == "" {
+				validationErrors = append(validationErrors, "tên liên hệ (contact_name) của nhà tổ chức không được để trống")
+			}
+		}
+
+		if data.OrganizerInfo.WebsiteUrl != nil {
+			// Cho phép gửi lên string rỗng "" (để xóa url)
+			// Nhưng nếu gửi lên string có nội dung, thì phải hợp lệ
+			if *data.OrganizerInfo.WebsiteUrl != "" {
+				_, err := url.ParseRequestURI(*data.OrganizerInfo.WebsiteUrl)
+				if err != nil {
+					validationErrors = append(validationErrors, "đường dẫn website (website_url) không hợp lệ")
+				}
+			}
+		}
+
 	}
 
 	return validationErrors
