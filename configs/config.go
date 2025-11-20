@@ -5,14 +5,13 @@ import (
 	"log"
 	"os"
 
-	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
 
 var mpConfig map[string]interface{}
 
 func LoadFileConfig() {
-	_ = godotenv.Load()
+	//_ = godotenv.Load()
 	env := os.Getenv("APP_ENV")
 	if env == "" {
 		env = "local"
